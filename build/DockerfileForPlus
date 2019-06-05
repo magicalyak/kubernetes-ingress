@@ -37,6 +37,7 @@ RUN set -x \
   && echo "Acquire::https::plus-pkgs.nginx.com::User-Agent  \"k8s-ic-$IC_VERSION-apt\";" >> /etc/apt/apt.conf.d/90nginx \
   && printf "deb https://plus-pkgs.nginx.com/debian stretch nginx-plus\n" > /etc/apt/sources.list.d/nginx-plus.list \
   && apt-get update && apt-get install -y nginx-plus=${NGINX_PLUS_VERSION} \
+  && apt-get install -y nginx-plus-module-njs \
   && apt-get remove --purge --auto-remove -y gnupg1 \
   && rm -rf /var/lib/apt/lists/* \
   && rm -rf /etc/ssl/nginx \

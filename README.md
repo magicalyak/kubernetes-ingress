@@ -3,7 +3,7 @@
 
 # NGINX Ingress Controller
 
-This repo provides an implementation of an Ingress controller for NGINX and NGINX Plus. 
+This repo provides an implementation of an Ingress controller for NGINX and NGINX Plus. This branch adds OpenID Connect functionality for the Ingress controller [nginxinc/nginx-openid-connect](https://github.com/nginxinc/nginx-openid-connect).
 
 **Note**: this project is different from the NGINX Ingress controller in [kubernetes/ingress-nginx](https://github.com/kubernetes/ingress-nginx) repo. See [this doc](docs/nginx-ingress-controllers.md) to find out about the key differences.
 
