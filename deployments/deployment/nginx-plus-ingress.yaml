@@ -18,7 +18,7 @@ spec:
     spec:
       serviceAccountName: nginx-ingress
       containers:
-      - image: nginx-plus-ingress:edge
+      - image: magicalyak/nginx-plus:r18v3
         imagePullPolicy: Always
         name: nginx-plus-ingress
         ports:
