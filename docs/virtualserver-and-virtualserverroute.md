@@ -4,8 +4,6 @@ The VirtualServer and VirtualServerRoute resources are new load balancing config
 
 This document is the reference documentation for the resources. To see additional examples of using the resources for specific use cases, go to the [examples-of-custom-resources](../examples-of-custom-resources) folder.
 
-**Feature Status**: The VirtualServer and VirtualServerRoute resources are available as a preview feature: it is suitable for experimenting and testing; however, it must be used with caution in production environments. Additionally, while the feature is in preview, we might introduce some backward-incompatible changes to the resources specification in the next releases.
-
 ## Contents
 
 - [VirtualServer and VirtualServerRoute Resources](#virtualserver-and-virtualserverroute-resources)
@@ -26,6 +24,8 @@ This document is the reference documentation for the resources. To see additiona
     - [Upstream.SessionCookie](#upstreamsessioncookie)
     - [Header](#header)
     - [Action](#action)
+    - [Action.Redirect](#actionredirect)
+    - [Action.Return](#actionreturn)
     - [Split](#split)
     - [Match](#match)
     - [Condition](#condition)
@@ -41,7 +41,7 @@ The VirtualServer and VirtualServerRoute resources are disabled by default. Make
 
 The VirtualServer resource defines load balancing configuration for a domain name, such as `example.com`. Below is an example of such configuration:
 ```yaml
-apiVersion: k8s.nginx.org/v1alpha1
+apiVersion: k8s.nginx.org/v1
 kind: VirtualServer
 metadata:
   name: cafe
@@ -63,6 +63,12 @@ spec:
   - path: /coffee
     action:
       pass: coffee
+  - path: ~ ^/decaf/.*\\.jpg$
+    action:
+      pass: coffee
+  - path: = /green/tea
+    action:
+      pass: tea
 ```
 
 | Field | Description | Type | Required |
@@ -78,13 +84,12 @@ The tls field defines TLS configuration for a VirtualServer. For example:
 ```yaml
 secret: cafe-secret
 redirect:
-  code: 302
-  basedOn: x-forwarded-proto
+  enable: true
 ```
 
 | Field | Description | Type | Required |
 | ----- | ----------- | ---- | -------- |
-| `secret` | The name of a secret with a TLS certificate and key. The secret must belong to the same namespace as the VirtualServer. The secret must contain keys named `tls.crt` and `tls.key` that contain the certificate and private key as described [here](https://kubernetes.io/docs/concepts/services-networking/ingress/#tls). If the secret doesn't exist, NGINX will break any attempt to establish a TLS connection to the host of the VirtualServer. | `string` | Yes |
+| `secret` | The name of a secret with a TLS certificate and key. The secret must belong to the same namespace as the VirtualServer. The secret must contain keys named `tls.crt` and `tls.key` that contain the certificate and private key as described [here](https://kubernetes.io/docs/concepts/services-networking/ingress/#tls). If the secret doesn't exist, NGINX will break any attempt to establish a TLS connection to the host of the VirtualServer. | `string` | No |
 | `redirect` | The redirect configuration of the TLS for a VirtualServer. | [`tls.redirect`](#VirtualServerTLSRedirect) | No |
 
 ### VirtualServer.TLS.Redirect
@@ -113,7 +118,7 @@ The route defines rules for matching client requests to actions like passing a r
 
 | Field | Description | Type | Required |
 | ----- | ----------- | ---- | -------- |
-| `path` | The path of the route. NGINX will match it against the URI of a request. The path must start with `/` and must not include any whitespace characters, `{`, `}` or `;`. For example, `/`, `/path` are valid. The path must be unique among the paths of all routes of the VirtualServer. | `string` | Yes |
+| `path` | The path of the route. NGINX will match it against the URI of a request. Possible values are: a prefix (`/`, `/path`), an exact match (`=/exact/match`), a case insensitive regular expression (`~*^/Bar.*\\.jpg`) or a case sensitive regular expression (`~^/foo.*\\.jpg`). In the case of a prefix (must start with `/`) or an exact match (must start with `=`), the path must not include any whitespace characters, `{`, `}` or `;`. In the case of the regex matches, all double quotes `"` must be escaped and the match can't end in an unescaped backslash `\`. The path must be unique among the paths of all routes of the VirtualServer. Check the [location](http://nginx.org/en/docs/http/ngx_http_core_module.html#location) directive for more information. | `string` | Yes |
 | `action` | The default action to perform for a request. | [`action`](#Action) | No* |
 | `splits` | The default splits configuration for traffic splitting. Must include at least 2 splits. | [`[]split`](#Split) | No* |
 | `matches` | The matching rules for advanced content-based routing. Requires the default `action` or `splits`.  Unmatched requests will be handled by the default `action` or `splits`. |[`matches`](#Match) | No |
@@ -130,7 +135,7 @@ In the example below, the VirtualServer `cafe` from the namespace `cafe-ns` defi
 
 VirtualServer:
 ```yaml
-apiVersion: k8s.nginx.org/v1alpha1
+apiVersion: k8s.nginx.org/v1
 kind: VirtualServer
 metadata:
   name: cafe
@@ -151,7 +156,7 @@ spec:
 
 VirtualServerRoute:
 ```yaml
-apiVersion: k8s.nginx.org/v1alpha1
+apiVersion: k8s.nginx.org/v1
 kind: VirtualServerRoute
 metadata:
   name: coffee
@@ -193,7 +198,7 @@ action:
 
 | Field | Description | Type | Required |
 | ----- | ----------- | ---- | -------- |
-| `path` | The path of the subroute. NGINX will match it against the URI of a request. The path must start with the same path as the path of the route of the VirtualServer that references this resource. It must not include any whitespace characters, `{`, `}` or `;`. The path must be unique among the paths of all subroutes of the VirtualServerRoute. | `string` | Yes |
+| `path` | The path of the subroute. NGINX will match it against the URI of a request. Possible values are: a prefix (`/`, `/path`), an exact match (`=/exact/match`), a case insensitive regular expression (`~*^/Bar.*\\.jpg`) or a case sensitive regular expression (`~^/foo.*\\.jpg`). In the case of a prefix, the path must start with the same path as the path of the route of the VirtualServer that references this resource. In the case of an exact or regex match, the path must be the same as the path of the route of the VirtualServer that references this resource. In the case of a prefix or an exact match, the path must not include any whitespace characters, `{`, `}` or `;`.  In the case of the regex matches, all double quotes `"` must be escaped and the match can't end in an unescaped backslash `\`. The path must be unique among the paths of all subroutes of the VirtualServerRoute. | `string` | Yes |
 | `action` | The default action to perform for a request. | [`action`](#Action) | No* |
 | `splits` | The default splits configuration for traffic splitting. Must include at least 2 splits. | [`[]split`](#Split) | No* |
 | `matches` | The matching rules for advanced content-based routing. Requires the default `action` or `splits`.  Unmatched requests will be handled by the default `action` or `splits`. |[`matches`](#Match) | No |
@@ -394,8 +399,48 @@ In the example below, client requests are passed to an upstream `coffee`:
 
 | Field | Description | Type | Required |
 | ----- | ----------- | ---- | -------- |
-| `pass` | Passes requests to an upstream. The upstream with that name must be defined in the resource. | `string` | Yes |
+| `pass` | Passes requests to an upstream. The upstream with that name must be defined in the resource. | `string` | No* |
+| `redirect` | Redirects requests to a provided URL. | [`action.redirect`](#ActionRedirect) | No* |
+| `return` | Returns a preconfigured response. | [`action.return`](#ActionReturn) | No* |
 
+
+\* -- an action must include exactly one of the following: `pass`, `redirect` or `return`.
+
+### Action.Redirect
+
+The redirect action defines a redirect to return for a request.
+
+In the example below, client requests are passed to a url `http://www.nginx.com`:
+```yaml
+redirect:
+  url: http://www.nginx.com
+  code: 301
+```
+
+| Field | Description | Type | Required |
+| ----- | ----------- | ---- | -------- |
+| `url` | The URL to redirect the request to. Supported NGINX variables: `$scheme`, `$http_x_forwarded_proto`, `$request_uri`, `$host`. Variables must be inclosed in curly braces. For example: `${host}${request_uri}`. | `string` | Yes |
+| `code` | The status code of a redirect. The allowed values are: `301`, `302`, `307`, `308`. The default is `301`. | `int` | No |
+
+### Action.Return
+
+The return action defines a preconfigured response for a request.
+
+In the example below, NGINX will respond with the preconfigured response for every request:
+```yaml
+return:
+  code: 200
+  type: text/plain
+  body: "Hello World\n"
+```
+
+| Field | Description | Type | Required |
+| ----- | ----------- | ---- | -------- |
+| `code` | The status code of the response. The allowed values are: `2XX`, `4XX` or `5XX`. The default is `200`. | `int` | No |
+| `type` | The MIME type of the response. The default is `text/plain`. | `string` | No |
+| `body` | The body of the response. Supports NGINX variables*. Variables must be inclosed in curly brackets. For example: `Request is ${request_uri}\n`. | `string` | Yes |
+
+\* -- Supported NGINX variables: `$request_uri`, `$request_method`, `$request_body`, `$scheme`, `$http_`, `$args`, `$arg_`, `$cookie_`, `$host`, `$request_time`, `$request_length`, `$nginx_version`, `$pid`, `$connection`, `$remote_addr`, `$remote_port`, `$time_iso8601`, `$time_local`, `$server_addr`, `$server_port`, `$server_name`, `$server_protocol`, `$connections_active`, `$connections_reading`, `$connections_writing` and `$connections_waiting`.
 
 ### Split
 

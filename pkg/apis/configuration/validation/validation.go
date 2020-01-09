@@ -7,21 +7,27 @@ import (
 	"strings"
 
 	"github.com/nginxinc/kubernetes-ingress/internal/configs"
-
-	"github.com/nginxinc/kubernetes-ingress/pkg/apis/configuration/v1alpha1"
+	v1 "github.com/nginxinc/kubernetes-ingress/pkg/apis/configuration/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
+const (
+	escapedStringsFmt    = `([^"\\]|\\.)*`
+	escapedStringsErrMsg = `must have all '"' (double quotes) escaped and must not end with an unescaped '\' (backslash)`
+)
+
+var escapedStringsFmtRegexp = regexp.MustCompile("^" + escapedStringsFmt + "$")
+
 // ValidateVirtualServer validates a VirtualServer.
-func ValidateVirtualServer(virtualServer *v1alpha1.VirtualServer, isPlus bool) error {
+func ValidateVirtualServer(virtualServer *v1.VirtualServer, isPlus bool) error {
 	allErrs := validateVirtualServerSpec(&virtualServer.Spec, field.NewPath("spec"), isPlus)
 	return allErrs.ToAggregate()
 }
 
 // validateVirtualServerSpec validates a VirtualServerSpec.
-func validateVirtualServerSpec(spec *v1alpha1.VirtualServerSpec, fieldPath *field.Path, isPlus bool) field.ErrorList {
+func validateVirtualServerSpec(spec *v1.VirtualServerSpec, fieldPath *field.Path, isPlus bool) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	allErrs = append(allErrs, validateHost(spec.Host, fieldPath.Child("host"))...)
@@ -49,7 +55,7 @@ func validateHost(host string, fieldPath *field.Path) field.ErrorList {
 	return allErrs
 }
 
-func validateTLS(tls *v1alpha1.TLS, fieldPath *field.Path) field.ErrorList {
+func validateTLS(tls *v1.TLS, fieldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if tls == nil {
@@ -64,7 +70,7 @@ func validateTLS(tls *v1alpha1.TLS, fieldPath *field.Path) field.ErrorList {
 	return allErrs
 }
 
-func validateTLSRedirect(redirect *v1alpha1.TLSRedirect, fieldPath *field.Path) field.ErrorList {
+func validateTLSRedirect(redirect *v1.TLSRedirect, fieldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if redirect == nil {
@@ -72,7 +78,7 @@ func validateTLSRedirect(redirect *v1alpha1.TLSRedirect, fieldPath *field.Path) 
 	}
 
 	if redirect.Code != nil {
-		allErrs = append(allErrs, validateTLSRedirectStatusCode(*redirect.Code, fieldPath.Child("code"))...)
+		allErrs = append(allErrs, validateRedirectStatusCode(*redirect.Code, fieldPath.Child("code"))...)
 	}
 
 	if redirect.BasedOn != "" && redirect.BasedOn != "scheme" && redirect.BasedOn != "x-forwarded-proto" {
@@ -82,17 +88,17 @@ func validateTLSRedirect(redirect *v1alpha1.TLSRedirect, fieldPath *field.Path) 
 	return allErrs
 }
 
-var validTLSRedirectStatusCodes = map[int]bool{
+var validRedirectStatusCodes = map[int]bool{
 	301: true,
 	302: true,
 	307: true,
 	308: true,
 }
 
-func validateTLSRedirectStatusCode(code int, fieldPath *field.Path) field.ErrorList {
+func validateRedirectStatusCode(code int, fieldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
-	if _, ok := validTLSRedirectStatusCodes[code]; !ok {
+	if _, ok := validRedirectStatusCodes[code]; !ok {
 		allErrs = append(allErrs, field.Invalid(fieldPath, code, "status code out of accepted range. accepted values are '301', '302', '307', '308'"))
 	}
 
@@ -176,7 +182,7 @@ func validateSize(size string, fieldPath *field.Path) field.ErrorList {
 	return allErrs
 }
 
-func validateBuffer(buff *v1alpha1.UpstreamBuffers, fieldPath *field.Path) field.ErrorList {
+func validateBuffer(buff *v1.UpstreamBuffers, fieldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if buff == nil {
@@ -217,7 +223,7 @@ func validateUpstreamLBMethod(lBMethod string, fieldPath *field.Path, isPlus boo
 	return allErrs
 }
 
-func validateUpstreamHealthCheck(hc *v1alpha1.HealthCheck, fieldPath *field.Path) field.ErrorList {
+func validateUpstreamHealthCheck(hc *v1.HealthCheck, fieldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if hc == nil {
@@ -251,7 +257,7 @@ func validateUpstreamHealthCheck(hc *v1alpha1.HealthCheck, fieldPath *field.Path
 	return allErrs
 }
 
-func validateSessionCookie(sc *v1alpha1.SessionCookie, fieldPath *field.Path) field.ErrorList {
+func validateSessionCookie(sc *v1.SessionCookie, fieldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if sc == nil {
@@ -368,7 +374,7 @@ func validateStatusCode(status string) string {
 	return ""
 }
 
-func validateHeader(h v1alpha1.Header, fieldPath *field.Path) field.ErrorList {
+func validateHeader(h v1.Header, fieldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if h.Name == "" {
@@ -404,7 +410,7 @@ func validateSecretName(name string, fieldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if name == "" {
-		return append(allErrs, field.Required(fieldPath, ""))
+		return allErrs
 	}
 
 	for _, msg := range validation.IsDNS1123Subdomain(name) {
@@ -414,7 +420,7 @@ func validateSecretName(name string, fieldPath *field.Path) field.ErrorList {
 	return allErrs
 }
 
-func validateUpstreams(upstreams []v1alpha1.Upstream, fieldPath *field.Path, isPlus bool) (allErrs field.ErrorList, upstreamNames sets.String) {
+func validateUpstreams(upstreams []v1.Upstream, fieldPath *field.Path, isPlus bool) (allErrs field.ErrorList, upstreamNames sets.String) {
 	allErrs = field.ErrorList{}
 	upstreamNames = sets.String{}
 
@@ -526,7 +532,7 @@ func validateDNS1035Label(name string, fieldPath *field.Path) field.ErrorList {
 	return allErrs
 }
 
-func validateVirtualServerRoutes(routes []v1alpha1.Route, fieldPath *field.Path, upstreamNames sets.String) field.ErrorList {
+func validateVirtualServerRoutes(routes []v1.Route, fieldPath *field.Path, upstreamNames sets.String) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	allPaths := sets.String{}
@@ -548,10 +554,10 @@ func validateVirtualServerRoutes(routes []v1alpha1.Route, fieldPath *field.Path,
 	return allErrs
 }
 
-func validateRoute(route v1alpha1.Route, fieldPath *field.Path, upstreamNames sets.String, isRouteFieldForbidden bool) field.ErrorList {
+func validateRoute(route v1.Route, fieldPath *field.Path, upstreamNames sets.String, isRouteFieldForbidden bool) field.ErrorList {
 	allErrs := field.ErrorList{}
 
-	allErrs = append(allErrs, validatePath(route.Path, fieldPath.Child("path"))...)
+	allErrs = append(allErrs, validateRoutePath(route.Path, fieldPath.Child("path"))...)
 
 	fieldCount := 0
 
@@ -593,16 +599,275 @@ func validateRoute(route v1alpha1.Route, fieldPath *field.Path, upstreamNames se
 	return allErrs
 }
 
-func validateAction(action *v1alpha1.Action, fieldPath *field.Path, upstreamNames sets.String) field.ErrorList {
-	allErrs := field.ErrorList{}
-
-	if action.Pass == "" {
-		return append(allErrs, field.Required(fieldPath.Child("pass"), ""))
+func countActions(action *v1.Action) int {
+	var count int
+	if action.Pass != "" {
+		count++
 	}
 
-	allErrs = append(allErrs, validateReferencedUpstream(action.Pass, fieldPath.Child("pass"), upstreamNames)...)
+	if action.Redirect != nil {
+		count++
+	}
+
+	if action.Return != nil {
+		count++
+	}
+
+	return count
+}
+
+func validateAction(action *v1.Action, fieldPath *field.Path, upstreamNames sets.String) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	if countActions(action) != 1 {
+		return append(allErrs, field.Required(fieldPath, "action must specify exactly one of `pass`, `redirect` or `return`"))
+	}
+
+	if action.Pass != "" {
+		allErrs = append(allErrs, validateReferencedUpstream(action.Pass, fieldPath.Child("pass"), upstreamNames)...)
+	}
+
+	if action.Redirect != nil {
+		allErrs = append(allErrs, validateActionRedirect(action.Redirect, fieldPath.Child("redirect"))...)
+	}
+
+	if action.Return != nil {
+		allErrs = append(allErrs, validateActionReturn(action.Return, fieldPath.Child("return"))...)
+	}
 
 	return allErrs
+}
+
+func validateActionRedirect(redirect *v1.ActionRedirect, fieldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	allErrs = append(allErrs, validateRedirectURL(redirect.URL, fieldPath.Child("url"))...)
+
+	if redirect.Code != 0 {
+		allErrs = append(allErrs, validateRedirectStatusCode(redirect.Code, fieldPath.Child("code"))...)
+	}
+
+	return allErrs
+}
+
+var nginxVariableRegexp = regexp.MustCompile(`\$\{([^}]*)\}`)
+
+// captureVariables returns a slice of vars enclosed in ${}. For example "${a} ${b}" would return ["a", "b"].
+func captureVariables(s string) []string {
+	var nVars []string
+
+	res := nginxVariableRegexp.FindAllStringSubmatch(s, -1)
+	for _, n := range res {
+		nVars = append(nVars, n[1])
+	}
+
+	return nVars
+}
+
+// validRedirectVariableNames includes NGINX variables allowed to be used in redirects.
+var validRedirectVariableNames = map[string]bool{
+	"scheme":                 true,
+	"http_x_forwarded_proto": true,
+	"request_uri":            true,
+	"host":                   true,
+}
+
+func validateRedirectURL(redirectURL string, fieldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	if redirectURL == "" {
+		return append(allErrs, field.Required(fieldPath, "must specify a url"))
+	}
+
+	if !escapedStringsFmtRegexp.MatchString(redirectURL) {
+		msg := validation.RegexError(escapedStringsErrMsg, escapedStringsFmt, "http://www.nginx.com", "${scheme}://${host}/green/", `\"http://www.nginx.com\"`)
+		return append(allErrs, field.Invalid(fieldPath, redirectURL, msg))
+	}
+
+	allErrs = append(allErrs, validateStringWithVariables(redirectURL, fieldPath, validRedirectVariableNames, nil)...)
+
+	return allErrs
+}
+
+func validateStringWithVariables(str string, fieldPath *field.Path, validVars map[string]bool, specialVars []string) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	if strings.HasSuffix(str, "$") {
+		return append(allErrs, field.Invalid(fieldPath, str, "must not end with $"))
+	}
+
+	for i, c := range str {
+		if c == '$' {
+			msg := "variables must be enclosed in curly braces, for example ${host}"
+
+			if str[i+1] != '{' {
+				return append(allErrs, field.Invalid(fieldPath, str, msg))
+			}
+
+			if !strings.Contains(str[i+1:], "}") {
+				return append(allErrs, field.Invalid(fieldPath, str, msg))
+			}
+		}
+	}
+
+	nginxVars := captureVariables(str)
+	for _, nVar := range nginxVars {
+		special := false
+		for _, specialVar := range specialVars {
+			if strings.HasPrefix(nVar, specialVar) {
+				special = true
+				break
+			}
+		}
+
+		if special {
+			allErrs = append(allErrs, validateSpecialVariable(nVar, fieldPath)...)
+		} else {
+			allErrs = append(allErrs, validateVariable(nVar, validVars, fieldPath)...)
+		}
+	}
+
+	return allErrs
+}
+
+func validateVariable(nVar string, validVars map[string]bool, fieldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	if !validVars[nVar] {
+		msg := fmt.Sprintf("'%v' contains an invalid NGINX variable. Accepted variables are: %v", nVar, mapToPrettyString(validVars))
+		allErrs = append(allErrs, field.Invalid(fieldPath, nVar, msg))
+	}
+	return allErrs
+}
+
+func isValidSpecialVariableHeader(header string) []string {
+	// underscores in $http_ variable represent '-'.
+	errMsgs := validation.IsHTTPHeaderName(strings.Replace(header, "_", "-", -1))
+	if len(errMsgs) >= 1 || strings.Contains(header, "-") {
+		return []string{"a valid HTTP header must consist of alphanumeric characters or '_'"}
+	}
+	return nil
+}
+
+func validateSpecialVariable(nVar string, fieldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	value := strings.SplitN(nVar, "_", 2)
+
+	switch value[0] {
+	case "arg":
+		for _, msg := range isArgumentName(value[1]) {
+			allErrs = append(allErrs, field.Invalid(fieldPath, nVar, msg))
+		}
+	case "http":
+		for _, msg := range isValidSpecialVariableHeader(value[1]) {
+			allErrs = append(allErrs, field.Invalid(fieldPath, nVar, msg))
+		}
+	case "cookie":
+		for _, msg := range isCookieName(value[1]) {
+			allErrs = append(allErrs, field.Invalid(fieldPath, nVar, msg))
+		}
+	}
+
+	return allErrs
+}
+
+func validateActionReturnCode(code int, fieldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	if (code >= 200 && code <= 299) || (code >= 400 && code <= 599) {
+		return allErrs
+	}
+
+	msg := fmt.Sprintf("must be a valid status code either 2XX, 4XX or 5XX, for example, 200 or 402.")
+	return append(allErrs, field.Invalid(fieldPath, code, msg))
+}
+
+func validateActionReturn(r *v1.ActionReturn, fieldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	if r.Body == "" {
+		return append(allErrs, field.Required(fieldPath.Child("body"), ""))
+	}
+
+	allErrs = append(allErrs, validateActionReturnBody(r.Body, fieldPath.Child("body"))...)
+
+	if r.Type != "" {
+		allErrs = append(allErrs, validateActionReturnType(r.Type, fieldPath.Child("type"))...)
+	}
+
+	if r.Code != 0 {
+		allErrs = append(allErrs, validateActionReturnCode(r.Code, fieldPath.Child("code"))...)
+	}
+
+	return allErrs
+}
+
+// returnBodyVariables includes NGINX variables allowed to be used in a return body.
+var returnBodyVariables = map[string]bool{
+	"request_uri":         true,
+	"request_method":      true,
+	"request_body":        true,
+	"scheme":              true,
+	"args":                true,
+	"host":                true,
+	"request_time":        true,
+	"request_length":      true,
+	"nginx_version":       true,
+	"pid":                 true,
+	"connection":          true,
+	"remote_addr":         true,
+	"remote_port":         true,
+	"time_iso8601":        true,
+	"time_local":          true,
+	"server_addr":         true,
+	"server_port":         true,
+	"server_name":         true,
+	"server_protocol":     true,
+	"connections_active":  true,
+	"connections_reading": true,
+	"connections_writing": true,
+	"connections_waiting": true,
+}
+
+var returnBodySpecialVariables = []string{"arg_", "http_", "cookie_"}
+
+func validateActionReturnBody(body string, fieldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	if !escapedStringsFmtRegexp.MatchString(body) {
+		msg := validation.RegexError(escapedStringsErrMsg, escapedStringsFmt, `Hello World! \n`, `\"${request_uri}\" is unavailable. \n`)
+		allErrs = append(allErrs, field.Invalid(fieldPath, body, msg))
+	}
+
+	allErrs = append(allErrs, validateStringWithVariables(body, fieldPath, returnBodyVariables, returnBodySpecialVariables)...)
+
+	return allErrs
+}
+
+var actionReturnTypeFmt = `([^;\{\}"\\]|\\.)*`
+var actionReturnTypeErr = `must have all '"' (double quotes) escaped, must not contain '{', '}' or ';' and must not end with an unescaped '\' (backslash)`
+
+var actionReturnTypeRegexp = regexp.MustCompile("^" + actionReturnTypeFmt + "$")
+
+func validateActionReturnType(returnType string, fieldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	if !actionReturnTypeRegexp.MatchString(returnType) {
+		msg := validation.RegexError(actionReturnTypeErr, actionReturnTypeFmt, "type/subtype", "application/json")
+		allErrs = append(allErrs, field.Invalid(fieldPath, returnType, msg))
+	}
+
+	return allErrs
+}
+
+func mapToPrettyString(m map[string]bool) string {
+	var out []string
+
+	for k := range m {
+		out = append(out, k)
+	}
+
+	return strings.Join(out, ", ")
 }
 
 func validateRouteField(value string, fieldPath *field.Path) field.ErrorList {
@@ -628,7 +893,7 @@ func validateReferencedUpstream(name string, fieldPath *field.Path, upstreamName
 	return allErrs
 }
 
-func validateSplits(splits []v1alpha1.Split, fieldPath *field.Path, upstreamNames sets.String) field.ErrorList {
+func validateSplits(splits []v1.Split, fieldPath *field.Path, upstreamNames sets.String) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if len(splits) < 2 {
@@ -660,7 +925,43 @@ func validateSplits(splits []v1alpha1.Split, fieldPath *field.Path, upstreamName
 	return allErrs
 }
 
-// For now, we only support prefix-based NGINX locations. For example, location /abc { ... }.
+// We support prefix-based NGINX locations, positive case-sensitive/insensitive regular expressions matches and exact matches.
+// More info http://nginx.org/en/docs/http/ngx_http_core_module.html#location
+func validateRoutePath(path string, fieldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	if path == "" {
+		return append(allErrs, field.Required(fieldPath, ""))
+	}
+
+	if strings.HasPrefix(path, "~") {
+		allErrs = append(allErrs, validateRegexPath(path, fieldPath)...)
+	} else if strings.HasPrefix(path, "/") {
+		allErrs = append(allErrs, validatePath(path, fieldPath)...)
+	} else if strings.HasPrefix(path, "=") {
+		allErrs = append(allErrs, validatePath(strings.TrimPrefix(path, "="), fieldPath)...)
+	} else {
+		allErrs = append(allErrs, field.Invalid(fieldPath, path, "must start with /, ~ or ="))
+	}
+
+	return allErrs
+}
+
+func validateRegexPath(path string, fieldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	if _, err := regexp.Compile(path); err != nil {
+		return append(allErrs, field.Invalid(fieldPath, path, fmt.Sprintf("must be a valid regular expression: %v", err)))
+	}
+
+	if !escapedStringsFmtRegexp.MatchString(path) {
+		msg := validation.RegexError(escapedStringsErrMsg, escapedStringsFmt, "*.jpg", "^/images/image_*.png$")
+		return append(allErrs, field.Invalid(fieldPath, path, msg))
+	}
+
+	return allErrs
+}
+
 const pathFmt = `/[^\s{};]*`
 const pathErrMsg = "must start with / and must not include any whitespace character, `{`, `}` or `;`"
 
@@ -681,7 +982,7 @@ func validatePath(path string, fieldPath *field.Path) field.ErrorList {
 	return allErrs
 }
 
-func validateMatch(match v1alpha1.Match, fieldPath *field.Path, upstreamNames sets.String) field.ErrorList {
+func validateMatch(match v1.Match, fieldPath *field.Path, upstreamNames sets.String) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if len(match.Conditions) == 0 {
@@ -711,7 +1012,7 @@ func validateMatch(match v1alpha1.Match, fieldPath *field.Path, upstreamNames se
 	return allErrs
 }
 
-func validateCondition(condition v1alpha1.Condition, fieldPath *field.Path) field.ErrorList {
+func validateCondition(condition v1.Condition, fieldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	fieldCount := 0
@@ -807,31 +1108,26 @@ func validateVariableName(name string, fieldPath *field.Path) field.ErrorList {
 	return allErrs
 }
 
-const matchValueFmt string = `([^"\\]|\\.)*`
-const matchValueErrMsg string = `a valid value must have all '"' (double quotes) escaped and must not end with an unescaped '\' (backslash)`
-
-var matchValueRegexp = regexp.MustCompile("^" + matchValueFmt + "$")
-
 func isValidMatchValue(value string) []string {
-	if !matchValueRegexp.MatchString(value) {
-		return []string{validation.RegexError(matchValueErrMsg, matchValueFmt, "value-123")}
+	if !escapedStringsFmtRegexp.MatchString(value) {
+		return []string{validation.RegexError(escapedStringsErrMsg, escapedStringsFmt, "value-123")}
 	}
 	return nil
 }
 
 // ValidateVirtualServerRoute validates a VirtualServerRoute.
-func ValidateVirtualServerRoute(virtualServerRoute *v1alpha1.VirtualServerRoute, isPlus bool) error {
+func ValidateVirtualServerRoute(virtualServerRoute *v1.VirtualServerRoute, isPlus bool) error {
 	allErrs := validateVirtualServerRouteSpec(&virtualServerRoute.Spec, field.NewPath("spec"), "", "/", isPlus)
 	return allErrs.ToAggregate()
 }
 
 // ValidateVirtualServerRouteForVirtualServer validates a VirtualServerRoute for a VirtualServer represented by its host and path prefix.
-func ValidateVirtualServerRouteForVirtualServer(virtualServerRoute *v1alpha1.VirtualServerRoute, virtualServerHost string, pathPrefix string, isPlus bool) error {
-	allErrs := validateVirtualServerRouteSpec(&virtualServerRoute.Spec, field.NewPath("spec"), virtualServerHost, pathPrefix, isPlus)
+func ValidateVirtualServerRouteForVirtualServer(virtualServerRoute *v1.VirtualServerRoute, virtualServerHost string, vsPath string, isPlus bool) error {
+	allErrs := validateVirtualServerRouteSpec(&virtualServerRoute.Spec, field.NewPath("spec"), virtualServerHost, vsPath, isPlus)
 	return allErrs.ToAggregate()
 }
 
-func validateVirtualServerRouteSpec(spec *v1alpha1.VirtualServerRouteSpec, fieldPath *field.Path, virtualServerHost string, pathPrefix string, isPlus bool) field.ErrorList {
+func validateVirtualServerRouteSpec(spec *v1.VirtualServerRouteSpec, fieldPath *field.Path, virtualServerHost string, vsPath string, isPlus bool) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	allErrs = append(allErrs, validateVirtualServerRouteHost(spec.Host, virtualServerHost, fieldPath.Child("host"))...)
@@ -839,7 +1135,7 @@ func validateVirtualServerRouteSpec(spec *v1alpha1.VirtualServerRouteSpec, field
 	upstreamErrs, upstreamNames := validateUpstreams(spec.Upstreams, fieldPath.Child("upstreams"), isPlus)
 	allErrs = append(allErrs, upstreamErrs...)
 
-	allErrs = append(allErrs, validateVirtualServerRouteSubroutes(spec.Subroutes, fieldPath.Child("subroutes"), upstreamNames, pathPrefix)...)
+	allErrs = append(allErrs, validateVirtualServerRouteSubroutes(spec.Subroutes, fieldPath.Child("subroutes"), upstreamNames, vsPath)...)
 
 	return allErrs
 }
@@ -857,10 +1153,27 @@ func validateVirtualServerRouteHost(host string, virtualServerHost string, field
 	return allErrs
 }
 
-func validateVirtualServerRouteSubroutes(routes []v1alpha1.Route, fieldPath *field.Path, upstreamNames sets.String, pathPrefix string) field.ErrorList {
+func isRegexOrExactMatch(path string) bool {
+	return strings.HasPrefix(path, "~") || strings.HasPrefix(path, "=")
+}
+
+func validateVirtualServerRouteSubroutes(routes []v1.Route, fieldPath *field.Path, upstreamNames sets.String, vsPath string) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	allPaths := sets.String{}
+
+	if isRegexOrExactMatch(vsPath) {
+		if len(routes) != 1 {
+			return append(allErrs, field.Invalid(fieldPath, "subroutes", "must have only one subroute if regex match or exact match are being used"))
+		}
+
+		idxPath := fieldPath.Index(0)
+		if routes[0].Path != vsPath {
+			return append(allErrs, field.Invalid(idxPath.Child("path"), routes[0].Path, "must have the same path as the referenced VirtualServer route path"))
+		}
+
+		return validateRoute(routes[0], idxPath, upstreamNames, true)
+	}
 
 	for i, r := range routes {
 		idxPath := fieldPath.Index(i)
@@ -868,8 +1181,8 @@ func validateVirtualServerRouteSubroutes(routes []v1alpha1.Route, fieldPath *fie
 		isRouteFieldForbidden := true
 		routeErrs := validateRoute(r, idxPath, upstreamNames, isRouteFieldForbidden)
 
-		if pathPrefix != "" && !strings.HasPrefix(r.Path, pathPrefix) {
-			msg := fmt.Sprintf("must start with '%s'", pathPrefix)
+		if vsPath != "" && !strings.HasPrefix(r.Path, vsPath) && !isRegexOrExactMatch(r.Path) {
+			msg := fmt.Sprintf("must start with '%s'", vsPath)
 			routeErrs = append(routeErrs, field.Invalid(idxPath, r.Path, msg))
 		}
 
@@ -885,7 +1198,7 @@ func validateVirtualServerRouteSubroutes(routes []v1alpha1.Route, fieldPath *fie
 	return allErrs
 }
 
-func rejectPlusResourcesInOSS(upstream v1alpha1.Upstream, idxPath *field.Path, isPlus bool) field.ErrorList {
+func rejectPlusResourcesInOSS(upstream v1.Upstream, idxPath *field.Path, isPlus bool) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if isPlus {
@@ -911,7 +1224,7 @@ func rejectPlusResourcesInOSS(upstream v1alpha1.Upstream, idxPath *field.Path, i
 	return allErrs
 }
 
-func validateQueue(queue *v1alpha1.UpstreamQueue, fieldPath *field.Path) field.ErrorList {
+func validateQueue(queue *v1.UpstreamQueue, fieldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if queue == nil {

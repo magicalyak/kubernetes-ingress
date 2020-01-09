@@ -15,6 +15,28 @@ This chart deploys the NGINX Ingress controller in your Kubernetes cluster.
 
 ## Installing the Chart
 
+### Installing via Helm Repository
+
+1. Add NGINX Helm repository:
+    ```
+    $ helm repo add nginx-edge https://helm.nginx.com/edge
+    $ helm repo update
+    ```
+
+2. To install the chart with the release name my-release (my-release is the name that you choose):
+
+    For NGINX:
+    ```
+    $ helm install nginx-edge/nginx-ingress --name my-release
+    ```
+
+    For NGINX Plus (assuming you have pushed the Ingress controller image `nginx-plus-ingress` to your private registry `myregistry.example.com`):
+    ```
+    $ helm install nginx-edge/nginx-ingress --name my-release --set controller.image.repository=myregistry.example.com/nginx-plus-ingress --set controller.nginxplus=true
+    ```
+
+### Installing Using Chart Sources
+
 1. Clone the Ingress controller repo:
     ```console
     $ git clone https://github.com/nginxinc/kubernetes-ingress/
@@ -84,7 +106,7 @@ Parameter | Description | Default
 `controller.ingressClass` | A class of the Ingress controller. The Ingress controller only processes Ingress resources that belong to its class - i.e. have the annotation `"kubernetes.io/ingress.class"` equal to the class. Additionally, the Ingress controller processes Ingress resources that do not have that annotation which can be disabled by setting the "-use-ingress-class-only" flag. | nginx
 `controller.useIngressClassOnly` | Ignore Ingress resources without the `"kubernetes.io/ingress.class"` annotation. | false
 `controller.watchNamespace` | Namespace to watch for Ingress resources. By default the Ingress controller watches all namespaces. | ""
-`controller.enableCustomResources` | Enable the custom resources. | false
+`controller.enableCustomResources` | Enable the custom resources. | true
 `controller.healthStatus` | Add a location "/nginx-health" to the default server. The location responds with the 200 status code for any request. Useful for external health-checking of the Ingress controller. | false
 `controller.healthStatusURI` | Sets the URI of health status location in the default server. Requires `contoller.healthStatus`. | "/nginx-health"
 `controller.nginxStatus.enable` | Enable the NGINX stub_status, or the NGINX Plus API. | true

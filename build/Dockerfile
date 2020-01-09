@@ -1,4 +1,4 @@
-FROM nginx:1.17.5
+FROM nginx:1.17.6
 
 # forward nginx access and error logs to stdout and stderr of the ingress
 # controller process
@@ -11,6 +11,7 @@ RUN mkdir -p /var/lib/nginx \
 	&& apt-get update \
 	&& apt-get install -y libcap2-bin \
 	&& setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx \
+	&& setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx-debug \
 	&& chown -R nginx:0 /etc/nginx \
 	&& chown -R nginx:0 /var/cache/nginx \
 	&& chown -R nginx:0 /var/lib/nginx \
