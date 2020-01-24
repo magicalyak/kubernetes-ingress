@@ -227,6 +227,18 @@ def are_all_pods_in_ready_state(v1: CoreV1Api, namespace) -> bool:
     return pod_ready_amount == len(pods.items)
 
 
+def get_pods_amount(v1: CoreV1Api, namespace) -> int:
+    """
+    Get an amount of pods.
+
+    :param v1: CoreV1Api
+    :param namespace: namespace
+    :return: int
+    """
+    pods = v1.list_namespaced_pod(namespace)
+    return 0 if not pods.items else len(pods.items)
+
+
 def create_service_from_yaml(v1: CoreV1Api, namespace, yaml_manifest) -> str:
     """
     Create a service based on yaml file.
@@ -411,7 +423,11 @@ def ensure_item_removal(get_item, *args, **kwargs) -> None:
             get_item(*args, **kwargs)
             counter = counter + 1
         if counter >= 30:
-            pytest.fail("Failed to remove the item after 30 seconds")
+            # Due to k8s issue with namespaces, they sometimes stuck in Terminating state, skip such cases
+            if "namespace" in str(get_item):
+                print(f"Failed to remove namespace '{args}' after 30 seconds, skip removal. Remove manually.")
+            else:
+                pytest.fail("Failed to remove the item after 30 seconds")
     except ApiException as ex:
         if ex.status == 404:
             print("Item was removed")
@@ -918,17 +934,18 @@ def delete_items_from_yaml(kube_apis, yaml_manifest, namespace) -> None:
                 delete_configmap(kube_apis.v1, doc['metadata']['name'], namespace)
 
 
-def ensure_connection(request_url) -> None:
+def ensure_connection(request_url, expected_code=404) -> None:
     """
     Wait for connection.
 
     :param request_url: url to request
+    :param expected_code: response code
     :return:
     """
     for _ in range(4):
         try:
             resp = requests.get(request_url, verify=False)
-            if resp.status_code == 404:
+            if resp.status_code == expected_code:
                 return
         except Exception as ex:
             print(f"Warning: there was an exception {str(ex)}")
@@ -991,16 +1008,20 @@ def get_events(v1: CoreV1Api, namespace) -> []:
     return res.items
 
 
-def ensure_response_from_backend(req_url, host) -> None:
+def ensure_response_from_backend(req_url, host, additional_headers=None) -> None:
     """
-    Wait for 502 to disappear.
+    Wait for 502|504 to disappear.
 
     :param req_url: url to request
     :param host:
+    :param additional_headers:
     :return:
     """
+    headers = {"host": host}
+    if additional_headers:
+        headers.update(additional_headers)
     for _ in range(30):
-        resp = requests.get(req_url, headers={"host": host}, verify=False)
+        resp = requests.get(req_url, headers=headers, verify=False)
         if resp.status_code != 502 and resp.status_code != 504:
             print(f"After {_ * 2} seconds got non 502|504 response. Continue with tests...")
             return
