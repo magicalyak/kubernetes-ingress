@@ -98,8 +98,11 @@ var mainCfg = MainConfig{
 	WorkerShutdownTimeout:   "1m",
 	WorkerConnections:       "1024",
 	WorkerRlimitNofile:      "65536",
+	LogFormat:               []string{"$remote_addr", "$remote_user"},
+	LogFormatEscaping:       "default",
 	StreamSnippets:          []string{"# comment"},
-	StreamLogFormat:         "$remote_addr",
+	StreamLogFormat:         []string{"$remote_addr", "$remote_user"},
+	StreamLogFormatEscaping: "none",
 	ResolverAddresses:       []string{"example.com", "127.0.0.1"},
 	ResolverIPV6:            false,
 	ResolverValid:           "10s",
@@ -108,6 +111,7 @@ var mainCfg = MainConfig{
 	KeepaliveRequests:       100,
 	VariablesHashBucketSize: 256,
 	VariablesHashMaxSize:    1024,
+	TLSPassthrough:          true,
 }
 
 func TestIngressForNGINXPlus(t *testing.T) {

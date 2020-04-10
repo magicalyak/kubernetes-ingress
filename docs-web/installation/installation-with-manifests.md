@@ -5,7 +5,7 @@ This document describes how to install the NGINX Ingress Controller in your Kube
 ## Prerequisites
 
 1. Make sure you have access to the Ingress controller image:
-    * For NGINX Ingress controller, use the image `nginx/nginx-ingress` from [DockerHub](https://hub.docker.com/r/nginx/nginx-ingress-controller/).
+    * For NGINX Ingress controller, use the image `nginx/nginx-ingress` from [DockerHub](https://hub.docker.com/r/nginx/nginx-ingress).
     * For NGINX Plus Ingress controller, build your own image and push it to your private Docker registry by following the instructions from [here](/nginx-ingress-controller/installation/building-ingress-controller-image).
 1. Clone the Ingress controller repo and change into the deployments folder:
     ```
@@ -18,15 +18,16 @@ This document describes how to install the NGINX Ingress Controller in your Kube
 1. Create a namespace and a service account for the Ingress controller:
     ```
     $ kubectl apply -f common/ns-and-sa.yaml
-    ``` 
+    ```
 2. Create a cluster role and cluster role binding for the service account:
     ```
     $ kubectl apply -f rbac/rbac.yaml
-    ``` 
+    ```
 **Note**: To perform this step you must be a cluster admin. Follow the documentation of your Kubernetes platform to configure the admin access. For GKE, see the [Role-Based Access Control](https://cloud.google.com/kubernetes-engine/docs/how-to/role-based-access-control) doc.
 
-## 2. Create the Default Secret, Customization ConfigMap, and Custom Resource Definitions
+## 2. Create Common Resources
 
+In this section, we create resources common for most of the Ingress Controller installations:
 1. Create a secret with a TLS certificate and a key for the default server in NGINX:
     ```
     $ kubectl apply -f common/default-server-secret.yaml
@@ -41,14 +42,36 @@ This document describes how to install the NGINX Ingress Controller in your Kube
 
 1. Create custom resource definitions for [VirtualServer and VirtualServerRoute](/nginx-ingress-controller/configuration/virtualserver-and-virtualserverroute-resources) resources:
     ```
-    $ kubectl apply -f common/custom-resource-definitions.yaml
+    $ kubectl apply -f common/vs-definition.yaml
+    $ kubectl apply -f common/vsr-definition.yaml
     ```
+
+If you would like to use the TCP, UDP, and TLS Passthrough load balancing features of the Ingress Controller, create the following additional resources: 
+1. Create custom resource definitions for [TransportServer](/nginx-ingress-controller/configuration/transportserver-resource) and [GlobalConfiguration](/nginx-ingress-controller/configuration/global-configuration/globalconfiguration-resource) resources:
+    ```
+    $ kubectl apply -f common/ts-definition.yaml
+    $ kubectl apply -f common/gc-definition.yaml
+    ```
+1. Create a GlobalConfiguration resource:
+    ```
+    $ kubectl apply -f common/global-configuration.yaml
+    ```
+    **Note**: Make sure to references this resource in the [`-global-configuration`](/nginx-ingress-controller/configuration/global-configuration/command-line-arguments#cmdoption-global-configuration) command-line argument.
+
+If you would like to use only TLS Passthrough load balancing (without TCP and UDP), create only the custom resource definition for the TransportServer:
+```
+$ kubectl apply -f common/ts-definition.yaml
+```
+
+> **Feature Status**: The TransportServer and GlobalConfiguration resources are available as a preview feature: it is suitable for experimenting and testing; however, it must be used with caution in production environments. Additionally, while the feature is in preview, we might introduce some backward-incompatible changes to the resources specification in the next releases.
 
 ## 3. Deploy the Ingress Controller
 
 We include two options for deploying the Ingress controller:
 * *Deployment*. Use a Deployment if you plan to dynamically change the number of Ingress controller replicas.
 * *DaemonSet*. Use a DaemonSet for deploying the Ingress controller on every node or a subset of nodes.
+
+> Before creating a Deployment or Daemonset resource, make sure to update the  [command-line arguments](/nginx-ingress-controller/configuration/global-configuration/command-line-arguments) of the Ingress Controller container in the corresponding manifest file according to your requirements.
 
 ### 3.1 Run the Ingress Controller
 * *Use a Deployment*.
@@ -98,8 +121,8 @@ $ kubectl get pods --namespace=nginx-ingress
 
 ### 4.1 Create a Service for the Ingress Controller Pods
 
-* *Use a NodePort service*. 
-    
+* *Use a NodePort service*.
+
     Create a service with the type *NodePort*:
     ```
     $ kubectl create -f service/nodeport.yaml
@@ -133,7 +156,7 @@ $ kubectl get pods --namespace=nginx-ingress
                 kubectl apply -f common/nginx-config.yaml
                 ```
             **Note**: For AWS, additional options regarding an allocated load balancer are available, such as the type of a load balancer and SSL termination. Read the [Kubernetes documentation](https://kubernetes.io/docs/concepts/services-networking/service/#type-loadbalancer) to learn more.
-        
+
         Kubernetes will allocate and configure a cloud load balancer for load balancing the Ingress controller pods.
     2. Use the public IP of the load balancer to access the Ingress controller. To get the public IP:
         * For GCP or Azure, run:
@@ -148,7 +171,7 @@ $ kubectl get pods --namespace=nginx-ingress
             ```
             $ nslookup <dns-name>
             ```
-        
+
         The public IP can be reported in the status of an ingress resource. See the [Reporting Resources Status doc](/nginx-ingress-controller/configuration/global-configuration/reporting-resources-status) for more details.
 
     > Learn more about type LoadBalancer in the [Kubernetes documentation](https://kubernetes.io/docs/concepts/services-networking/service/#type-loadbalancer).

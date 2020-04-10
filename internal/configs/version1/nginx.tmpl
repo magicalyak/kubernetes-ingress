@@ -34,7 +34,10 @@ http {
     {{- end}}
 
     {{if .LogFormat -}}
-    log_format  main  '{{.LogFormat}}';
+    log_format  main {{if .LogFormatEscaping}}escape={{ .LogFormatEscaping }} {{end}}
+                     {{range $i, $value := .LogFormat -}}
+                     {{with $value}}'{{if $i}} {{end}}{{$value}}'
+                     {{end}}{{end}};
     {{- else -}}
     log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
                       '$status $body_bytes_sent "$http_referer" '
@@ -86,14 +89,23 @@ http {
         set $default_connection_header "";
 
         listen 80 default_server{{if .ProxyProtocol}} proxy_protocol{{end}};
+
+        {{if .TLSPassthrough}}
+        listen unix:/var/lib/nginx/passthrough-https.sock ssl default_server{{if .HTTP2}} http2{{end}} proxy_protocol;
+        set_real_ip_from unix:;
+        real_ip_header proxy_protocol;
+        {{else}}
         listen 443 ssl default_server{{if .HTTP2}} http2{{end}}{{if .ProxyProtocol}} proxy_protocol{{end}};
+        {{end}}
 
         ssl_certificate /etc/nginx/secrets/default;
         ssl_certificate_key /etc/nginx/secrets/default;
 
         server_name _;
         server_tokens "{{.ServerTokens}}";
+        {{if .DefaultServerAccessLogOff}}
         access_log off;
+        {{end}}
 
         {{if .OpenTracingEnabled}}
         opentracing off;
@@ -161,15 +173,36 @@ http {
 
 stream {
     {{if .StreamLogFormat -}}
-    log_format  stream-main  '{{.StreamLogFormat}}';
+    log_format  stream-main {{if .StreamLogFormatEscaping}}escape={{ .StreamLogFormatEscaping }} {{end}}
+                            {{range $i, $value := .StreamLogFormat -}}
+                            {{with $value}}'{{if $i}} {{end}}{{$value}}'
+                            {{end}}{{end}};
     {{- else -}}
     log_format  stream-main  '$remote_addr [$time_local] '
                       '$protocol $status $bytes_sent $bytes_received '
-                      '$session_time';
+                      '$session_time "$ssl_preread_server_name"';
     {{- end}}
 
     access_log  /var/log/nginx/stream-access.log  stream-main;
 
     {{range $value := .StreamSnippets}}
     {{$value}}{{end}}
+
+    {{if .TLSPassthrough}}
+    map $ssl_preread_server_name $dest_internal_passthrough  {
+        default unix:/var/lib/nginx/passthrough-https.sock;
+        include /etc/nginx/tls-passthrough-hosts.conf;
+    }
+
+    server {
+        listen 443;
+
+        ssl_preread on;
+
+        proxy_protocol on;
+        proxy_pass $dest_internal_passthrough;
+    }
+    {{end}}
+
+    include /etc/nginx/stream-conf.d/*.conf;
 }

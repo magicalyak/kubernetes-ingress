@@ -21,6 +21,7 @@ import (
 	"github.com/nginxinc/kubernetes-ingress/internal/metrics"
 	"github.com/nginxinc/kubernetes-ingress/internal/metrics/collectors"
 	"github.com/nginxinc/kubernetes-ingress/internal/nginx"
+	cr_validation "github.com/nginxinc/kubernetes-ingress/pkg/apis/configuration/validation"
 	k8s_nginx "github.com/nginxinc/kubernetes-ingress/pkg/client/clientset/versioned"
 	conf_scheme "github.com/nginxinc/kubernetes-ingress/pkg/client/clientset/versioned/scheme"
 	"github.com/nginxinc/nginx-plus-go-client/client"
@@ -89,6 +90,10 @@ var (
 		`Path to the VirtualServer NGINX configuration template for a VirtualServer resource.
 	(default for NGINX "nginx.virtualserver.tmpl"; default for NGINX Plus "nginx-plus.virtualserver.tmpl")`)
 
+	transportServerTemplatePath = flag.String("transportserver-template-path", "",
+		`Path to the TransportServer NGINX configuration template for a TransportServer resource.
+	(default for NGINX "nginx.transportserver.tmpl"; default for NGINX Plus "nginx-plus.transportserver.tmpl")`)
+
 	externalService = flag.String("external-service", "",
 		`Specifies the name of the service with the type LoadBalancer through which the Ingress controller pods are exposed externally.
 The external address of the service is used when reporting the status of Ingress resources. Requires -report-ingress-status.`)
@@ -126,6 +131,14 @@ The external address of the service is used when reporting the status of Ingress
 
 	enableCustomResources = flag.Bool("enable-custom-resources", true,
 		"Enable custom resources")
+
+	globalConfiguration = flag.String("global-configuration", "",
+		`A GlobalConfiguration resource for global configuration of the Ingress Controller. Requires -enable-custom-resources. If the flag is set,
+		but the Ingress controller is not able to fetch the corresponding resource from Kubernetes API, the Ingress Controller 
+		will fail to start. Format: <namespace>/<name>`)
+
+	enableTLSPassthrough = flag.Bool("enable-tls-passthrough", false,
+		"Enable TLS Passthrough on port 443. Requires -enable-custom-resources")
 )
 
 func main() {
@@ -164,6 +177,10 @@ func main() {
 	allowedCIDRs, err := parseNginxStatusAllowCIDRs(*nginxStatusAllowCIDRs)
 	if err != nil {
 		glog.Fatalf(`Invalid value for nginx-status-allow-cidrs: %v`, err)
+	}
+
+	if *enableTLSPassthrough && !*enableCustomResources {
+		glog.Fatalf("enable-tls-passthrough flag requires -enable-custom-resources")
 	}
 
 	glog.Infof("Starting NGINX Ingress controller Version=%v GitCommit=%v\n", version, gitCommit)
@@ -208,10 +225,12 @@ func main() {
 	nginxConfTemplatePath := "nginx.tmpl"
 	nginxIngressTemplatePath := "nginx.ingress.tmpl"
 	nginxVirtualServerTemplatePath := "nginx.virtualserver.tmpl"
+	nginxTransportServerTemplatePath := "nginx.transportserver.tmpl"
 	if *nginxPlus {
 		nginxConfTemplatePath = "nginx-plus.tmpl"
 		nginxIngressTemplatePath = "nginx-plus.ingress.tmpl"
 		nginxVirtualServerTemplatePath = "nginx-plus.virtualserver.tmpl"
+		nginxTransportServerTemplatePath = "nginx-plus.transportserver.tmpl"
 	}
 
 	if *mainTemplatePath != "" {
@@ -222,6 +241,9 @@ func main() {
 	}
 	if *virtualServerTemplatePath != "" {
 		nginxVirtualServerTemplatePath = *virtualServerTemplatePath
+	}
+	if *transportServerTemplatePath != "" {
+		nginxTransportServerTemplatePath = *transportServerTemplatePath
 	}
 
 	nginxBinaryPath := "/usr/sbin/nginx"
@@ -234,7 +256,7 @@ func main() {
 		glog.Fatalf("Error creating TemplateExecutor: %v", err)
 	}
 
-	templateExecutorV2, err := version2.NewTemplateExecutor(nginxVirtualServerTemplatePath)
+	templateExecutorV2, err := version2.NewTemplateExecutor(nginxVirtualServerTemplatePath, nginxTransportServerTemplatePath)
 	if err != nil {
 		glog.Fatalf("Error creating TemplateExecutorV2: %v", err)
 	}
@@ -295,13 +317,43 @@ func main() {
 		nginxManager.CreateSecret(configs.WildcardSecretName, bytes, nginx.TLSSecretFileMode)
 	}
 
+	globalConfigurationValidator := createGlobalConfigurationValidator()
+
+	globalCfgParams := configs.NewDefaultGlobalConfigParams()
+	if *enableTLSPassthrough {
+		globalCfgParams = configs.NewGlobalConfigParamsWithTLSPassthrough()
+	}
+
+	if *globalConfiguration != "" {
+		ns, name, err := k8s.ParseNamespaceName(*globalConfiguration)
+		if err != nil {
+			glog.Fatalf("Error parsing the global-configuration argument: %v", err)
+		}
+
+		if !*enableCustomResources {
+			glog.Fatal("global-configuration flag requires -enable-custom-resources")
+		}
+
+		gc, err := confClient.K8sV1alpha1().GlobalConfigurations(ns).Get(context.TODO(), name, meta_v1.GetOptions{})
+		if err != nil {
+			glog.Fatalf("Error when getting %s: %v", *globalConfiguration, err)
+		}
+
+		err = globalConfigurationValidator.ValidateGlobalConfiguration(gc)
+		if err != nil {
+			glog.Fatalf("GlobalConfiguration %s is invalid: %v", *globalConfiguration, err)
+		}
+
+		globalCfgParams = configs.ParseGlobalConfiguration(gc, *enableTLSPassthrough)
+	}
+
 	cfgParams := configs.NewDefaultConfigParams()
 	if *nginxConfigMaps != "" {
 		ns, name, err := k8s.ParseNamespaceName(*nginxConfigMaps)
 		if err != nil {
 			glog.Fatalf("Error parsing the nginx-configmaps argument: %v", err)
 		}
-		cfm, err := kubeClient.CoreV1().ConfigMaps(ns).Get(name, meta_v1.GetOptions{})
+		cfm, err := kubeClient.CoreV1().ConfigMaps(ns).Get(context.TODO(), name, meta_v1.GetOptions{})
 		if err != nil {
 			glog.Fatalf("Error when getting %v: %v", *nginxConfigMaps, err)
 		}
@@ -335,6 +387,7 @@ func main() {
 		NginxStatusAllowCIDRs:          allowedCIDRs,
 		NginxStatusPort:                *nginxStatusPort,
 		StubStatusOverUnixSocketForOSS: *enablePrometheusMetrics,
+		TLSPassthrough:                 *enableTLSPassthrough,
 	}
 
 	ngxConfig := configs.GenerateNginxMainConfig(staticCfgParams, cfgParams)
@@ -353,6 +406,11 @@ func main() {
 		if err != nil {
 			glog.Fatalf("Error creating OpenTracing tracer config file: %v", err)
 		}
+	}
+
+	if *enableTLSPassthrough {
+		var emptyFile []byte
+		nginxManager.CreateTLSPassthroughHostsConfig(emptyFile)
 	}
 
 	nginxDone := make(chan error, 1)
@@ -382,28 +440,33 @@ func main() {
 	}
 
 	isWildcardEnabled := *wildcardTLSSecret != ""
-	cnf := configs.NewConfigurator(nginxManager, staticCfgParams, cfgParams, templateExecutor, templateExecutorV2, *nginxPlus, isWildcardEnabled)
+	cnf := configs.NewConfigurator(nginxManager, staticCfgParams, cfgParams, globalCfgParams, templateExecutor, templateExecutorV2, *nginxPlus, isWildcardEnabled)
 	controllerNamespace := os.Getenv("POD_NAMESPACE")
 
+	transportServerValidator := cr_validation.NewTransportServerValidator(*enableTLSPassthrough)
+
 	lbcInput := k8s.NewLoadBalancerControllerInput{
-		KubeClient:                kubeClient,
-		ConfClient:                confClient,
-		ResyncPeriod:              30 * time.Second,
-		Namespace:                 *watchNamespace,
-		NginxConfigurator:         cnf,
-		DefaultServerSecret:       *defaultServerSecret,
-		IsNginxPlus:               *nginxPlus,
-		IngressClass:              *ingressClass,
-		UseIngressClassOnly:       *useIngressClassOnly,
-		ExternalServiceName:       *externalService,
-		ControllerNamespace:       controllerNamespace,
-		ReportIngressStatus:       *reportIngressStatus,
-		IsLeaderElectionEnabled:   *leaderElectionEnabled,
-		LeaderElectionLockName:    *leaderElectionLockName,
-		WildcardTLSSecret:         *wildcardTLSSecret,
-		ConfigMaps:                *nginxConfigMaps,
-		AreCustomResourcesEnabled: *enableCustomResources,
-		MetricsCollector:          controllerCollector,
+		KubeClient:                   kubeClient,
+		ConfClient:                   confClient,
+		ResyncPeriod:                 30 * time.Second,
+		Namespace:                    *watchNamespace,
+		NginxConfigurator:            cnf,
+		DefaultServerSecret:          *defaultServerSecret,
+		IsNginxPlus:                  *nginxPlus,
+		IngressClass:                 *ingressClass,
+		UseIngressClassOnly:          *useIngressClassOnly,
+		ExternalServiceName:          *externalService,
+		ControllerNamespace:          controllerNamespace,
+		ReportIngressStatus:          *reportIngressStatus,
+		IsLeaderElectionEnabled:      *leaderElectionEnabled,
+		LeaderElectionLockName:       *leaderElectionLockName,
+		WildcardTLSSecret:            *wildcardTLSSecret,
+		ConfigMaps:                   *nginxConfigMaps,
+		GlobalConfiguration:          *globalConfiguration,
+		AreCustomResourcesEnabled:    *enableCustomResources,
+		MetricsCollector:             controllerCollector,
+		GlobalConfigurationValidator: globalConfigurationValidator,
+		TransportServerValidator:     transportServerValidator,
 	}
 
 	lbc := k8s.NewLoadBalancerController(lbcInput)
@@ -415,6 +478,22 @@ func main() {
 		glog.Info("Waiting for the controller to exit...")
 		time.Sleep(30 * time.Second)
 	}
+}
+
+func createGlobalConfigurationValidator() *cr_validation.GlobalConfigurationValidator {
+	forbiddenListenerPorts := map[int]bool{
+		80:  true,
+		443: true,
+	}
+
+	if *nginxStatus {
+		forbiddenListenerPorts[*nginxStatusPort] = true
+	}
+	if *enablePrometheusMetrics {
+		forbiddenListenerPorts[*prometheusMetricsListenPort] = true
+	}
+
+	return cr_validation.NewGlobalConfigurationValidator(forbiddenListenerPorts)
 }
 
 func handleTermination(lbc *k8s.LoadBalancerController, nginxManager nginx.Manager, nginxDone chan error) {
@@ -516,7 +595,7 @@ func getAndValidateSecret(kubeClient *kubernetes.Clientset, secretNsName string)
 	if err != nil {
 		return nil, fmt.Errorf("could not parse the %v argument: %v", secretNsName, err)
 	}
-	secret, err = kubeClient.CoreV1().Secrets(ns).Get(name, meta_v1.GetOptions{})
+	secret, err = kubeClient.CoreV1().Secrets(ns).Get(context.TODO(), name, meta_v1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("could not get %v: %v", secretNsName, err)
 	}

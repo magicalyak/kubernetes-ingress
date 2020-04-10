@@ -8,9 +8,10 @@ import yaml
 from kubernetes import config, client
 from kubernetes.client import CoreV1Api, ExtensionsV1beta1Api, RbacAuthorizationV1beta1Api, CustomObjectsApi, \
     ApiextensionsV1beta1Api, AppsV1Api
+from kubernetes.client.rest import ApiException
 
-from suite.custom_resources_utils import create_crds_from_yaml, delete_crd, create_virtual_server_from_yaml, \
-    delete_virtual_server, create_v_s_route_from_yaml, delete_v_s_route
+from suite.custom_resources_utils import create_virtual_server_from_yaml, \
+    delete_virtual_server, create_v_s_route_from_yaml, delete_v_s_route, create_crd_from_yaml, delete_crd
 from suite.kube_config_utils import ensure_context_in_config, get_current_context_name
 from suite.resources_utils import create_namespace_with_name_from_yaml, delete_namespace, create_ns_and_sa_from_yaml, \
     patch_rbac, create_example_app, wait_until_all_pods_are_ready, delete_common_app, \
@@ -20,7 +21,7 @@ from suite.resources_utils import create_ingress_controller, delete_ingress_cont
 from suite.resources_utils import create_service_from_yaml, get_service_node_ports, wait_for_public_ip
 from suite.resources_utils import create_configmap_from_yaml, create_secret_from_yaml
 from suite.yaml_utils import get_first_vs_host_from_yaml, get_paths_from_vs_yaml, get_paths_from_vsr_yaml, \
-    get_route_namespace_from_vs_yaml
+    get_route_namespace_from_vs_yaml, get_name_from_yaml
 
 from settings import ALLOWED_SERVICE_TYPES, ALLOWED_IC_TYPES, DEPLOYMENTS, TEST_DATA, ALLOWED_DEPLOYMENT_TYPES
 
@@ -59,11 +60,12 @@ class PublicEndpoint:
         port (int):
         port_ssl (int):
     """
-    def __init__(self, public_ip, port=80, port_ssl=443, api_port=8080):
+    def __init__(self, public_ip, port=80, port_ssl=443, api_port=8080, metrics_port=9113):
         self.public_ip = public_ip
         self.port = port
         self.port_ssl = port_ssl
         self.api_port = api_port
+        self.metrics_port = metrics_port
 
 
 class IngressControllerPrerequisites:
@@ -122,7 +124,7 @@ def delete_test_namespaces(kube_apis, request) -> None:
 
 
 @pytest.fixture(scope="class")
-def ingress_controller(cli_arguments, kube_apis, ingress_controller_prerequisites, request) -> None:
+def ingress_controller(cli_arguments, kube_apis, ingress_controller_prerequisites, request) -> str:
     """
     Create Ingress Controller according to the context.
 
@@ -130,9 +132,10 @@ def ingress_controller(cli_arguments, kube_apis, ingress_controller_prerequisite
     :param kube_apis: client apis
     :param ingress_controller_prerequisites
     :param request: pytest fixture
-    :return:
+    :return: IC name
     """
     namespace = ingress_controller_prerequisites.namespace
+    name = "nginx-ingress"
     print("------------------------- Create IC without CRDs -----------------------------------")
     try:
         extra_args = request.param.get('extra_args', None)
@@ -140,13 +143,20 @@ def ingress_controller(cli_arguments, kube_apis, ingress_controller_prerequisite
     except AttributeError:
         print("IC will start with CRDs disabled and without any additional cli-arguments")
         extra_args = ["-enable-custom-resources=false"]
-    name = create_ingress_controller(kube_apis.v1, kube_apis.apps_v1_api, cli_arguments, namespace, extra_args)
+    try:
+        name = create_ingress_controller(kube_apis.v1, kube_apis.apps_v1_api, cli_arguments, namespace, extra_args)
+    except ApiException as ex:
+        # Finalizer doesn't start if fixture creation was incomplete, ensure clean up here
+        print(f"Failed to complete IC fixture: {ex}\nClean up the cluster as much as possible.")
+        delete_ingress_controller(kube_apis.apps_v1_api, name, cli_arguments['deployment-type'], namespace)
 
     def fin():
         print("Delete IC:")
         delete_ingress_controller(kube_apis.apps_v1_api, name, cli_arguments['deployment-type'], namespace)
 
     request.addfinalizer(fin)
+
+    return name
 
 
 @pytest.fixture(scope="session")
@@ -166,12 +176,12 @@ def ingress_controller_endpoint(cli_arguments, kube_apis, ingress_controller_pre
         print(f"The Public IP: {public_ip}")
         service_name = create_service_from_yaml(kube_apis.v1,
                                                 namespace,
-                                                f"{TEST_DATA}/common/service/nodeport-with-api-port.yaml")
-        port, port_ssl, api_port = get_service_node_ports(kube_apis.v1, service_name, namespace)
-        return PublicEndpoint(public_ip, port, port_ssl, api_port)
+                                                f"{TEST_DATA}/common/service/nodeport-with-additional-ports.yaml")
+        port, port_ssl, api_port, metrics_port = get_service_node_ports(kube_apis.v1, service_name, namespace)
+        return PublicEndpoint(public_ip, port, port_ssl, api_port, metrics_port)
     else:
         create_service_from_yaml(kube_apis.v1,
-                                 namespace, f"{TEST_DATA}/common/service/loadbalancer-with-api-port.yaml")
+                                 namespace, f"{TEST_DATA}/common/service/loadbalancer-with-additional-ports.yaml")
         public_ip = wait_for_public_ip(kube_apis.v1, namespace)
         print(f"The Public IP: {public_ip}")
         return PublicEndpoint(public_ip)
@@ -291,27 +301,52 @@ def crd_ingress_controller(cli_arguments, kube_apis, ingress_controller_prerequi
     :return:
     """
     namespace = ingress_controller_prerequisites.namespace
-    print("------------------------- Update ClusterRole -----------------------------------")
-    if request.param['type'] == 'rbac-without-vs':
-        patch_rbac(kube_apis.rbac_v1_beta1, f"{TEST_DATA}/virtual-server/rbac-without-vs.yaml")
-    print("------------------------- Register CRD -----------------------------------")
-    crd_names = create_crds_from_yaml(kube_apis.api_extensions_v1_beta1,
-                                      f"{DEPLOYMENTS}/common/custom-resource-definitions.yaml")
-    print("------------------------- Create IC -----------------------------------")
-    name = create_ingress_controller(kube_apis.v1, kube_apis.apps_v1_api, cli_arguments, namespace,
-                                     request.param.get('extra_args', None))
-    ensure_connection_to_public_endpoint(ingress_controller_endpoint.public_ip,
-                                         ingress_controller_endpoint.port,
-                                         ingress_controller_endpoint.port_ssl)
+    name = "nginx-ingress"
+    vs_crd_name = get_name_from_yaml(f"{DEPLOYMENTS}/common/vs-definition.yaml")
+    vsr_crd_name = get_name_from_yaml(f"{DEPLOYMENTS}/common/vsr-definition.yaml")
+    ts_crd_name = get_name_from_yaml(f"{DEPLOYMENTS}/common/ts-definition.yaml")
+    gc_crd_name = get_name_from_yaml(f"{DEPLOYMENTS}/common/gc-definition.yaml")
 
-    def fin():
-        for crd_name in crd_names:
-            print("Remove the CRD:")
-            delete_crd(kube_apis.api_extensions_v1_beta1, crd_name)
-        print("Remove the IC:")
-        delete_ingress_controller(kube_apis.apps_v1_api, name, cli_arguments['deployment-type'], namespace)
+    try:
+        print("------------------------- Update ClusterRole -----------------------------------")
+        if request.param['type'] == 'rbac-without-vs':
+            patch_rbac(kube_apis.rbac_v1_beta1, f"{TEST_DATA}/virtual-server/rbac-without-vs.yaml")
+        print("------------------------- Register CRDs -----------------------------------")
+        create_crd_from_yaml(kube_apis.api_extensions_v1_beta1, vs_crd_name,
+                             f"{DEPLOYMENTS}/common/vs-definition.yaml")
+        create_crd_from_yaml(kube_apis.api_extensions_v1_beta1, vsr_crd_name,
+                             f"{DEPLOYMENTS}/common/vsr-definition.yaml")
+        create_crd_from_yaml(kube_apis.api_extensions_v1_beta1, ts_crd_name,
+                             f"{DEPLOYMENTS}/common/ts-definition.yaml")
+        create_crd_from_yaml(kube_apis.api_extensions_v1_beta1, gc_crd_name,
+                             f"{DEPLOYMENTS}/common/gc-definition.yaml")
+        print("------------------------- Create IC -----------------------------------")
+        name = create_ingress_controller(kube_apis.v1, kube_apis.apps_v1_api, cli_arguments, namespace,
+                                         request.param.get('extra_args', None))
+        ensure_connection_to_public_endpoint(ingress_controller_endpoint.public_ip,
+                                             ingress_controller_endpoint.port,
+                                             ingress_controller_endpoint.port_ssl)
+    except ApiException as ex:
+        # Finalizer method doesn't start if fixture creation was incomplete, ensure clean up here
+        print(f"Failed to complete CRD IC fixture: {ex}\nClean up the cluster as much as possible.")
+        delete_crd(kube_apis.api_extensions_v1_beta1, vs_crd_name)
+        delete_crd(kube_apis.api_extensions_v1_beta1, vsr_crd_name)
+        delete_crd(kube_apis.api_extensions_v1_beta1, ts_crd_name)
+        delete_crd(kube_apis.api_extensions_v1_beta1, gc_crd_name)
         print("Restore the ClusterRole:")
         patch_rbac(kube_apis.rbac_v1_beta1, f"{DEPLOYMENTS}/rbac/rbac.yaml")
+        print("Remove the IC:")
+        delete_ingress_controller(kube_apis.apps_v1_api, name, cli_arguments['deployment-type'], namespace)
+
+    def fin():
+        delete_crd(kube_apis.api_extensions_v1_beta1, vs_crd_name)
+        delete_crd(kube_apis.api_extensions_v1_beta1, vsr_crd_name)
+        delete_crd(kube_apis.api_extensions_v1_beta1, ts_crd_name)
+        delete_crd(kube_apis.api_extensions_v1_beta1, gc_crd_name)
+        print("Restore the ClusterRole:")
+        patch_rbac(kube_apis.rbac_v1_beta1, f"{DEPLOYMENTS}/rbac/rbac.yaml")
+        print("Remove the IC:")
+        delete_ingress_controller(kube_apis.apps_v1_api, name, cli_arguments['deployment-type'], namespace)
 
     request.addfinalizer(fin)
 
@@ -346,7 +381,7 @@ def virtual_server_setup(request, kube_apis, crd_ingress_controller, ingress_con
     Prepare Virtual Server Example.
 
     :param request: internal pytest fixture to parametrize this method:
-        {example: virtul-server|virtual-server-tls|..., app_type: simple|split|...}
+        {example: virtual-server|virtual-server-tls|..., app_type: simple|split|...}
         'example' is a directory name in TEST_DATA,
         'app_type' is a directory name in TEST_DATA/common/app
     :param kube_apis: client apis

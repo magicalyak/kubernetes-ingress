@@ -1,9 +1,13 @@
 package version2
 
-import "testing"
+import (
+	"testing"
+)
 
 const nginxPlusVirtualServerTmpl = "nginx-plus.virtualserver.tmpl"
 const nginxVirtualServerTmpl = "nginx.virtualserver.tmpl"
+const nginxPlusTransportServerTmpl = "nginx-plus.transportserver.tmpl"
+const nginxTransportServerTmpl = "nginx.transportserver.tmpl"
 
 var virtualServerCfg = VirtualServerConfig{
 	Upstreams: []Upstream{
@@ -139,6 +143,7 @@ var virtualServerCfg = VirtualServerConfig{
 				ProxyPass:                "http://test-upstream",
 				ProxyNextUpstream:        "error timeout",
 				ProxyNextUpstreamTimeout: "5s",
+				Internal:                 true,
 			},
 			{
 				Path:                     "@loc0",
@@ -149,6 +154,19 @@ var virtualServerCfg = VirtualServerConfig{
 				ProxyPass:                "http://coffee-v1",
 				ProxyNextUpstream:        "error timeout",
 				ProxyNextUpstreamTimeout: "5s",
+				ProxyInterceptErrors:     true,
+				ErrorPages: []ErrorPage{
+					{
+						Name:         "@error_page_1",
+						Codes:        "400 500",
+						ResponseCode: 200,
+					},
+					{
+						Name:         "@error_page_2",
+						Codes:        "500",
+						ResponseCode: 0,
+					},
+				},
 			},
 			{
 				Path:                     "@loc1",
@@ -181,11 +199,65 @@ var virtualServerCfg = VirtualServerConfig{
 				ProxyNextUpstreamTimeout: "5s",
 			},
 		},
+		ErrorPageLocations: []ErrorPageLocation{
+			{
+				Name:        "@vs_cafe_cafe_vsr_tea_tea_tea__tea_error_page_0",
+				DefaultType: "application/json",
+				Return: &Return{
+					Code: 200,
+					Text: "Hello World",
+				},
+				Headers: nil,
+			},
+			{
+				Name:        "@vs_cafe_cafe_vsr_tea_tea_tea__tea_error_page_1",
+				DefaultType: "",
+				Return: &Return{
+					Code: 200,
+					Text: "Hello World",
+				},
+				Headers: []Header{
+					{
+						Name:  "Set-Cookie",
+						Value: "cookie1=test",
+					},
+					{
+						Name:  "Set-Cookie",
+						Value: "cookie2=test; Secure",
+					},
+				},
+			},
+		},
 	},
 }
 
+var transportServerCfg = TransportServerConfig{
+	Upstreams: []StreamUpstream{
+		{
+			Name: "udp-upstream",
+			Servers: []StreamUpstreamServer{
+				{
+					Address: "10.0.0.20:5001",
+				},
+			},
+		},
+	},
+	Server: StreamServer{
+		Port:           1234,
+		UDP:            true,
+		StatusZone:     "udp-app",
+		ProxyRequests:  createPointerFromInt(1),
+		ProxyResponses: createPointerFromInt(2),
+		ProxyPass:      "udp-upstream",
+	},
+}
+
+func createPointerFromInt(n int) *int {
+	return &n
+}
+
 func TestVirtualServerForNginxPlus(t *testing.T) {
-	executor, err := NewTemplateExecutor(nginxPlusVirtualServerTmpl)
+	executor, err := NewTemplateExecutor(nginxPlusVirtualServerTmpl, nginxPlusTransportServerTmpl)
 	if err != nil {
 		t.Fatalf("Failed to create template executor: %v", err)
 	}
@@ -199,12 +271,58 @@ func TestVirtualServerForNginxPlus(t *testing.T) {
 }
 
 func TestVirtualServerForNginx(t *testing.T) {
-	executor, err := NewTemplateExecutor(nginxVirtualServerTmpl)
+	executor, err := NewTemplateExecutor(nginxVirtualServerTmpl, nginxTransportServerTmpl)
 	if err != nil {
 		t.Fatalf("Failed to create template executor: %v", err)
 	}
 
 	data, err := executor.ExecuteVirtualServerTemplate(&virtualServerCfg)
+	if err != nil {
+		t.Fatalf("Failed to execute template: %v", err)
+	}
+
+	t.Log(string(data))
+}
+
+func TestTransportServerForNginxPlus(t *testing.T) {
+	executor, err := NewTemplateExecutor(nginxPlusVirtualServerTmpl, nginxPlusTransportServerTmpl)
+	if err != nil {
+		t.Fatalf("Failed to create template executor: %v", err)
+	}
+
+	data, err := executor.ExecuteTransportServerTemplate(&transportServerCfg)
+	if err != nil {
+		t.Fatalf("Failed to execute template: %v", err)
+	}
+
+	t.Log(string(data))
+}
+
+func TestTransportServerForNginx(t *testing.T) {
+	executor, err := NewTemplateExecutor(nginxVirtualServerTmpl, nginxTransportServerTmpl)
+	if err != nil {
+		t.Fatalf("Failed to create template executor: %v", err)
+	}
+
+	data, err := executor.ExecuteTransportServerTemplate(&transportServerCfg)
+	if err != nil {
+		t.Fatalf("Failed to execute template: %v", err)
+	}
+
+	t.Log(string(data))
+}
+
+func TestTLSPassthroughHosts(t *testing.T) {
+	executor, err := NewTemplateExecutor(nginxVirtualServerTmpl, nginxTransportServerTmpl)
+	if err != nil {
+		t.Fatalf("Failed to create template executor: %v", err)
+	}
+
+	unixSocketsCfg := TLSPassthroughHostsConfig{
+		"app.example.com": "unix:/var/lib/nginx/passthrough-default_secure-app.sock",
+	}
+
+	data, err := executor.ExecuteTLSPassthroughHostsTemplate(&unixSocketsCfg)
 	if err != nil {
 		t.Fatalf("Failed to execute template: %v", err)
 	}

@@ -286,19 +286,21 @@ def create_service_with_name(v1: CoreV1Api, namespace, name) -> str:
         return create_service(v1, namespace, dep)
 
 
-def get_service_node_ports(v1: CoreV1Api, name, namespace) -> (int, int, int):
+def get_service_node_ports(v1: CoreV1Api, name, namespace) -> (int, int, int, int):
     """
     Get service allocated node_ports.
 
     :param v1: CoreV1Api
     :param name:
     :param namespace:
-    :return: (plain_port, ssl_port, api_port)
+    :return: (plain_port, ssl_port, api_port, exporter_port)
     """
     resp = v1.read_namespaced_service(name, namespace)
-    assert len(resp.spec.ports) == 3, "An unexpected amount of ports in a service. Check the configuration"
+    assert len(resp.spec.ports) == 4, "An unexpected amount of ports in a service. Check the configuration"
     print(f"Service with an API port: {resp.spec.ports[2].node_port}")
-    return resp.spec.ports[0].node_port, resp.spec.ports[1].node_port, resp.spec.ports[2].node_port
+    print(f"Service with an Exporter port: {resp.spec.ports[3].node_port}")
+    return resp.spec.ports[0].node_port, resp.spec.ports[1].node_port,\
+        resp.spec.ports[2].node_port, resp.spec.ports[3].node_port
 
 
 def wait_for_public_ip(v1: CoreV1Api, namespace: str) -> str:
@@ -418,16 +420,16 @@ def ensure_item_removal(get_item, *args, **kwargs) -> None:
     """
     try:
         counter = 0
-        while counter < 30:
+        while counter < 120:
             time.sleep(1)
             get_item(*args, **kwargs)
             counter = counter + 1
-        if counter >= 30:
-            # Due to k8s issue with namespaces, they sometimes stuck in Terminating state, skip such cases
-            if "namespace" in str(get_item):
-                print(f"Failed to remove namespace '{args}' after 30 seconds, skip removal. Remove manually.")
+        if counter >= 120:
+            # Due to k8s issue with namespaces, they sometimes get stuck in Terminating state, skip such cases
+            if "_namespace " in str(get_item):
+                print(f"Failed to remove namespace '{args}' after 120 seconds, skip removal. Remove manually.")
             else:
-                pytest.fail("Failed to remove the item after 30 seconds")
+                pytest.fail("Failed to remove the item after 120 seconds")
     except ApiException as ex:
         if ex.status == 404:
             print("Item was removed")

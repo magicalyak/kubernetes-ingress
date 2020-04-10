@@ -6,10 +6,6 @@ The Ingress Controller supports several command-line arguments. Setting the argu
 
 Below we describe the available command-line arguments:
 ```eval_rst
-.. option:: -alsologtostderr
-
-	Log to standard error as well as files
-
 .. option:: -default-server-tls-secret <string>
 
 	Secret with a TLS certificate and key for TLS termination of the default server.
@@ -39,11 +35,25 @@ Below we describe the available command-line arguments:
 
 	See :option:`-report-ingress-status` flag.
 
+.. option:: -enable-tls-passthrough
+
+	Enable TLS Passthrough on port 443.
+
+	Requires :option:`-enable-custom-resources`.	
+
 .. option:: -external-service <string>
 
 	Specifies the name of the service with the type LoadBalancer through which the Ingress controller pods are exposed externally. The external address of the service is used when reporting the status of Ingress resources.
 
 	Requires :option:`-report-ingress-status`.
+
+.. option:: -global-configuration <string>
+
+	A GlobalConfiguration resource for global configuration of the Ingress Controller. If the flag is set, but the Ingress Controller is not able to fetch the corresponding resource from Kubernetes API, the Ingress Controller will fail to start.
+	
+	Format: ``<namespace>/<name>``
+
+	Requires :option:`-enable-custom-resources`.
 
 .. option:: -health-status
 
@@ -66,14 +76,6 @@ Below we describe the available command-line arguments:
 .. option:: -log_backtrace_at <value>
 
 	When logging hits line ``file:N``, emit a stack trace
-
-.. option:: -log_dir <string>
-
-	If non-empty, write log files in this directory
-
-.. option:: -logtostderr
-
-	Log to standard error instead of files
 
 .. option:: -main-template-path <string>
 
@@ -121,9 +123,12 @@ Below we describe the available command-line arguments:
 	Update the address field in the status of Ingresses resources.
 	Requires the :option:`-external-service` flag or the ``external-status-address`` key in the ConfigMap.
 
-.. option:: -stderrthreshold <value>
+.. option:: -transportserver-template-path <string>
 
-	Logs at or above this threshold go to stderr
+	Path to the TransportServer NGINX configuration template for a TransportServer resource.
+
+	- Default for NGINX is "nginx.transportserver.tmpl"
+	- Default for NGINX Plus is "nginx-plus.transportserver.tmpl".
 
 .. option:: -use-ingress-class-only
 

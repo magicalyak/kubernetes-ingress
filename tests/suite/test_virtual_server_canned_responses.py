@@ -2,9 +2,11 @@ import pytest
 import requests
 import json
 
+from kubernetes.client.rest import ApiException
+
 from settings import TEST_DATA
-from suite.custom_assertions import wait_and_assert_status_code, assert_event, assert_event_and_get_count, \
-    assert_event_count_increased
+from suite.custom_assertions import wait_and_assert_status_code, assert_event_and_get_count, \
+    assert_event_count_increased, assert_event_starts_with_text_and_contains_errors
 from suite.custom_resources_utils import patch_virtual_server_from_yaml, get_vs_nginx_template_conf
 from suite.resources_utils import get_first_pod_name, get_events, wait_before_test
 
@@ -83,9 +85,11 @@ class TestVSCannedResponse:
         assert_event_count_increased(vs_event_text, initial_count, vs_events)
 
     def test_validation_flow(self, kube_apis, crd_ingress_controller, virtual_server_setup):
+        invalid_fields = [
+            "spec.routes[0].action.return.code", "spec.routes[0].action.return.body"
+        ]
         text = f"{virtual_server_setup.namespace}/{virtual_server_setup.vs_name}"
-        event_text = f"VirtualServer {text} is invalid and was rejected: " \
-                     f"spec.routes[0].action.return.body: Required value"
+        vs_event_text = f"VirtualServer {text} is invalid and was rejected: "
         vs_src = f"{TEST_DATA}/virtual-server-canned-responses/virtual-server-invalid.yaml"
         patch_virtual_server_from_yaml(kube_apis.custom_objects, virtual_server_setup.vs_name, vs_src,
                                        virtual_server_setup.namespace)
@@ -93,4 +97,34 @@ class TestVSCannedResponse:
 
         wait_and_assert_status_code(404, virtual_server_setup.backend_1_url, virtual_server_setup.vs_host)
         vs_events = get_events(kube_apis.v1, virtual_server_setup.namespace)
-        assert_event(event_text, vs_events)
+        assert_event_starts_with_text_and_contains_errors(vs_event_text, vs_events, invalid_fields)
+
+    def test_openapi_validation_flow(self, kube_apis, ingress_controller_prerequisites,
+                                     crd_ingress_controller, virtual_server_setup):
+        ic_pod_name = get_first_pod_name(kube_apis.v1, ingress_controller_prerequisites.namespace)
+        config_old = get_vs_nginx_template_conf(kube_apis.v1,
+                                                virtual_server_setup.namespace,
+                                                virtual_server_setup.vs_name,
+                                                ic_pod_name,
+                                                ingress_controller_prerequisites.namespace)
+        vs_src = f"{TEST_DATA}/virtual-server-canned-responses/virtual-server-invalid-openapi.yaml"
+        try:
+            patch_virtual_server_from_yaml(kube_apis.custom_objects, virtual_server_setup.vs_name, vs_src,
+                                           virtual_server_setup.namespace)
+        except ApiException as ex:
+            assert ex.status == 422 \
+                   and "spec.routes.action.return.type" in ex.body \
+                   and "spec.routes.action.return.body" in ex.body \
+                   and "spec.routes.action.return.code" in ex.body
+        except Exception as ex:
+            pytest.fail(f"An unexpected exception is raised: {ex}")
+        else:
+            pytest.fail("Expected an exception but there was none")
+
+        wait_before_test(1)
+        config_new = get_vs_nginx_template_conf(kube_apis.v1,
+                                                virtual_server_setup.namespace,
+                                                virtual_server_setup.vs_name,
+                                                ic_pod_name,
+                                                ingress_controller_prerequisites.namespace)
+        assert config_old == config_new, "Expected: config doesn't change"

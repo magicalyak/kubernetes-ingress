@@ -1,83 +1,88 @@
 package configs
 
+import conf_v1alpha1 "github.com/nginxinc/kubernetes-ingress/pkg/apis/configuration/v1alpha1"
+
 // ConfigParams holds NGINX configuration parameters that affect the main NGINX config
 // as well as configs for Ingress resources.
 type ConfigParams struct {
-	LocationSnippets              []string
-	ServerSnippets                []string
-	ServerTokens                  string
-	ProxyConnectTimeout           string
-	ProxyReadTimeout              string
-	ProxySendTimeout              string
 	ClientMaxBodySize             string
-	HTTP2                         bool
-	RedirectToHTTPS               bool
-	SSLRedirect                   bool
-	MainMainSnippets              []string
-	MainHTTPSnippets              []string
-	MainStreamSnippets            []string
-	MainServerNamesHashBucketSize string
-	MainServerNamesHashMaxSize    string
-	MainAccessLogOff              bool
-	MainLogFormat                 string
-	MainErrorLogLevel             string
-	MainStreamLogFormat           string
-	ProxyBuffering                bool
-	ProxyBuffers                  string
-	ProxyBufferSize               string
-	ProxyMaxTempFileSize          string
-	ProxyProtocol                 bool
-	ProxyHideHeaders              []string
-	ProxyPassHeaders              []string
-	UpstreamZoneSize              string
-	HSTS                          bool
-	HSTSBehindProxy               bool
-	HSTSMaxAge                    int64
-	HSTSIncludeSubdomains         bool
-	LBMethod                      string
-	MainWorkerProcesses           string
-	MainWorkerCPUAffinity         string
-	MainWorkerShutdownTimeout     string
-	MainWorkerConnections         string
-	MainWorkerRlimitNofile        string
-	Keepalive                     int
-	MaxFails                      int
-	MaxConns                      int
+	DefaultServerAccessLogOff     bool
 	FailTimeout                   string
 	HealthCheckEnabled            bool
 	HealthCheckMandatory          bool
 	HealthCheckMandatoryQueue     int64
-	SlowStart                     string
-	ResolverAddresses             []string
-	ResolverIPV6                  bool
-	ResolverValid                 string
-	ResolverTimeout               string
-	MainKeepaliveTimeout          string
+	HSTS                          bool
+	HSTSBehindProxy               bool
+	HSTSIncludeSubdomains         bool
+	HSTSMaxAge                    int64
+	HTTP2                         bool
+	Keepalive                     int
+	LBMethod                      string
+	LocationSnippets              []string
+	MainAccessLogOff              bool
+	MainErrorLogLevel             string
+	MainHTTPSnippets              []string
 	MainKeepaliveRequests         int64
-	VariablesHashBucketSize       uint64
-	VariablesHashMaxSize          uint64
-	MainOpenTracingLoadModule     bool
+	MainKeepaliveTimeout          string
+	MainLogFormat                 []string
+	MainLogFormatEscaping         string
+	MainMainSnippets              []string
 	MainOpenTracingEnabled        bool
+	MainOpenTracingLoadModule     bool
 	MainOpenTracingTracer         string
 	MainOpenTracingTracerConfig   string
+	MainServerNamesHashBucketSize string
+	MainServerNamesHashMaxSize    string
+	MainStreamLogFormat           []string
+	MainStreamLogFormatEscaping   string
+	MainStreamSnippets            []string
+	MainWorkerConnections         string
+	MainWorkerCPUAffinity         string
+	MainWorkerProcesses           string
+	MainWorkerRlimitNofile        string
+	MainWorkerShutdownTimeout     string
+	MaxConns                      int
+	MaxFails                      int
+	ProxyBuffering                bool
+	ProxyBuffers                  string
+	ProxyBufferSize               string
+	ProxyConnectTimeout           string
+	ProxyHideHeaders              []string
+	ProxyMaxTempFileSize          string
+	ProxyPassHeaders              []string
+	ProxyProtocol                 bool
+	ProxyReadTimeout              string
+	ProxySendTimeout              string
+	RedirectToHTTPS               bool
+	ResolverAddresses             []string
+	ResolverIPV6                  bool
+	ResolverTimeout               string
+	ResolverValid                 string
+	ServerSnippets                []string
+	ServerTokens                  string
+	SlowStart                     string
+	SSLRedirect                   bool
+	UpstreamZoneSize              string
+	VariablesHashBucketSize       uint64
+	VariablesHashMaxSize          uint64
 
 	RealIPHeader    string
-	SetRealIPFrom   []string
 	RealIPRecursive bool
+	SetRealIPFrom   []string
 
-	MainServerSSLProtocols           string
-	MainServerSSLPreferServerCiphers bool
 	MainServerSSLCiphers             string
 	MainServerSSLDHParam             string
 	MainServerSSLDHParamFileContent  *string
+	MainServerSSLPreferServerCiphers bool
+	MainServerSSLProtocols           string
 
-	MainTemplate    *string
 	IngressTemplate *string
+	MainTemplate    *string
 
-	JWTRealm    string
 	JWTKey      string
-	JWTToken    string
 	JWTLoginURL string
+	JWTRealm    string
+	JWTToken    string
 
 	Ports    []int
 	SSLPorts []int
@@ -91,6 +96,19 @@ type StaticConfigParams struct {
 	NginxStatusAllowCIDRs          []string
 	NginxStatusPort                int
 	StubStatusOverUnixSocketForOSS bool
+	TLSPassthrough                 bool
+}
+
+// GlobalConfigParams holds global configuration parameters. For now, it only holds listeners.
+// GlobalConfigParams should replace ConfigParams in the future.
+type GlobalConfigParams struct {
+	Listeners map[string]Listener
+}
+
+// Listener represents a listener that can be used in a TransportServer resource.
+type Listener struct {
+	Port     int
+	Protocol string
 }
 
 // NewDefaultConfigParams creates a ConfigParams with default values.
@@ -121,5 +139,21 @@ func NewDefaultConfigParams() *ConfigParams {
 		MainKeepaliveRequests:         100,
 		VariablesHashBucketSize:       256,
 		VariablesHashMaxSize:          1024,
+	}
+}
+
+// NewDefaultGlobalConfigParams creates a GlobalConfigParams with default values.
+func NewDefaultGlobalConfigParams() *GlobalConfigParams {
+	return &GlobalConfigParams{Listeners: map[string]Listener{}}
+}
+
+// NewGlobalConfigParamsWithTLSPassthrough creates new GlobalConfigParams with enabled TLS Passthrough listener.
+func NewGlobalConfigParamsWithTLSPassthrough() *GlobalConfigParams {
+	return &GlobalConfigParams{
+		Listeners: map[string]Listener{
+			conf_v1alpha1.TLSPassthroughListenerName: {
+				Protocol: conf_v1alpha1.TLSPassthroughListenerProtocol,
+			},
+		},
 	}
 }
