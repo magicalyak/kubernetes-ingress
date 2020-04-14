@@ -4,12 +4,13 @@ FROM debian:buster-slim AS base
 
 LABEL maintainer="NGINX Docker Maintainers <docker-maint@nginx.com>"
 
-ENV NGINX_PLUS_VERSION 20-1~buster
+ENV NGINX_PLUS_VERSION 21-1~buster
 ARG IC_VERSION
 
 # Download certificate and key from the customer portal (https://cs.nginx.com)
 # and copy to the build context
-COPY nginx-repo.crt nginx-repo.key /etc/ssl/nginx/
+COPY nginx-repo.crt /etc/ssl/nginx/
+COPY nginx-repo.key /etc/ssl/nginx/
 
 # Make sure the certificate and key have correct permissions
 RUN chmod 644 /etc/ssl/nginx/*
@@ -37,9 +38,9 @@ RUN set -x \
   && echo "Acquire::https::plus-pkgs.nginx.com::SslKey      \"/etc/ssl/nginx/nginx-repo.key\";" >> /etc/apt/apt.conf.d/90nginx \
   && echo "Acquire::https::plus-pkgs.nginx.com::User-Agent  \"k8s-ic-$IC_VERSION-apt\";" >> /etc/apt/apt.conf.d/90nginx \
   && printf "deb https://plus-pkgs.nginx.com/debian buster nginx-plus\n" > /etc/apt/sources.list.d/nginx-plus.list \
-  && apt-get update && apt-get install -y nginx-plus=${NGINX_PLUS_VERSION} nginx-plus-module-njs \
+	&& apt-get update && apt-get install -y nginx-plus=${NGINX_PLUS_VERSION} nginx-plus-module-njs \
   && setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx \
-  && setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx-debug 
+  && setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx-debug \
   && apt-get remove --purge --auto-remove -y gnupg1 \
   && rm -rf /var/lib/apt/lists/* \
   && rm -rf /etc/ssl/nginx \
@@ -56,7 +57,7 @@ RUN ln -sf /proc/1/fd/1 /var/log/nginx/access.log \
 
 RUN  mkdir -p /var/lib/nginx \
   && mkdir -p /etc/nginx/secrets \
-  && mkdir -p /etc/nginx/stream-conf.d 
+  && mkdir -p /etc/nginx/stream-conf.d \
   && chown -R nginx:0 /etc/nginx \
   && chown -R nginx:0 /var/cache/nginx \
   && chown -R nginx:0 /var/lib/nginx/ \
