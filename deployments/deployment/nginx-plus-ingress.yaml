@@ -50,8 +50,17 @@ spec:
           - -nginx-configmaps=$(POD_NAMESPACE)/nginx-config
           - -default-server-tls-secret=$(POD_NAMESPACE)/default-server-secret
          #- -v=3 # Enables extensive logging. Useful for troubleshooting.
-         #- -report-ingress-status
-         #- -external-service=nginx-ingress
-         #- -enable-leader-election
+          - -report-ingress-status
+          - -external-service=nginx-ingress
+          - -enable-leader-election
          #- -enable-prometheus-metrics
          #- -global-configuration=$(POD_NAMESPACE)/nginx-configuration
+          - -enable-custom-resources
+          - -nginx-status-allow-cidrs=0.0.0.0/0  # This is insecure, try to restrict to smaller subnet
+        resources: # Completely optional but if you get lint errors
+          limits:
+            cpu: 10m
+            memory: 20Mi
+          requests:
+            cpu: 10m
+            memory: 20Mi

@@ -1,0 +1,112 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: nginx-ingress
+  namespace: nginx-ingress
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx-ingress
+  template:
+    metadata:
+      labels:
+        app: nginx-ingress
+    spec:
+      serviceAccountName: nginx-ingress
+      volumes:
+      - name: shared-data
+        emptyDir: {}
+      - name: ca-chain
+        secret:
+          secretName: ca-chain
+      - name: apigw-client
+        secret:
+          secretName: apigw-client
+      - name: fruit-client
+        secret:
+          secretName: fruit-client
+      containers:
+      - image: bgautrea/nginx-ingress:v1.5.3-debug
+        imagePullPolicy: Always
+        name: nginx-ingress
+        ports:
+        - name: http
+          containerPort: 80
+        - name: https
+          containerPort: 443
+        volumeMounts:
+        - name: shared-data
+          mountPath: /etc/nginx/secrets/
+        - name: ca-chain
+          mountPath: /etc/nginx/secrets/ca-chain.cert.pem
+          readOnly: true
+          subPath: ca-chain.cert.pem
+        - name: apigw-client
+          mountPath: /etc/nginx/secrets/client
+          readOnly: true
+          subPath: apigw.pem
+        - name: fruit-client
+          mountPath: /etc/nginx/secrets/fruit-client.cert
+          readOnly: true
+          subPath: tls.crt
+        - name: fruit-client
+          mountPath: /etc/nginx/secrets/fruit-client.key
+          readOnly: true
+          subPath: tls.key
+        securityContext:
+          allowPrivilegeEscalation: true
+          runAsUser: 101 #nginx
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - NET_BIND_SERVICE
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        args:
+          - -nginx-plus
+          - -nginx-configmaps=$(POD_NAMESPACE)/nginx-config
+          #- -default-server-tls-secret=$(POD_NAMESPACE)/default-server-secret
+          - -default-server-tls-secret=$(POD_NAMESPACE)/duck-secret
+          #- -v=3 # Enables extensive logging. Useful for troubleshooting.
+          - -report-ingress-status
+          - -external-service=nginx-ingress
+          - -enable-leader-election
+          - -enable-custom-resources
+          - -nginx-status-allow-cidrs=192.168.0.0/16  # This is insecure, try to restrict to smaller subnet
+        resources: # Completely optional but if you get lint errors
+          limits:
+            cpu: 10m
+            memory: 20Mi
+          requests:
+            cpu: 10m
+            memory: 20Mi
+      - image: bgautrea/getssl:v3
+        imagePullPolicy: Always
+        name: getkey
+        volumeMounts:
+        - name: shared-data
+          mountPath: /etc/nginx/secrets/
+        env:
+        - name: KID_ENV
+          value: 'XXXXXXXXXXX'
+        - name: AKEY_ENV
+          value: 'XXXXXXXXXXX'
+        command: ["/usr/local/bin/run.sh"]
+        resources: # Completely optional but if you get lint errors
+          limits:
+            cpu: 10m
+            memory: 20Mi
+          requests:
+            cpu: 10m
+            memory: 20Mi
+      imagePullSecrets:
+      - name: regcred
