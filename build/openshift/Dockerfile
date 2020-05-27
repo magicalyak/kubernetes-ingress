@@ -9,7 +9,7 @@ LABEL name="NGINX Ingress Controller" \
       maintainer="NGINX Docker Maintainers <docker-maint@nginx.com>" \
       vendor="NGINX Inc <kubernetes@nginx.com>"
 
-ENV NGINX_VERSION=1.17.9
+ENV NGINX_VERSION=1.17.10
 
 RUN set -x \
 	&& groupadd --system --gid 101 nginx \
@@ -20,7 +20,6 @@ RUN set -x \
 	&& echo "gpgcheck=0" >> /etc/yum.repos.d/nginx.repo \
 	&& echo "enabled=1" >> /etc/yum.repos.d/nginx.repo \
 	&& echo "module_hotfixes=true" >> /etc/yum.repos.d/nginx.repo \
-	&& yum update -y \
 	&& yum install -y nginx-${NGINX_VERSION} \
 	&& mkdir -p /var/lib/nginx \
 	&& mkdir -p /etc/nginx/secrets \
