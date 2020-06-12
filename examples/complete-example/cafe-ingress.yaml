@@ -5,10 +5,10 @@ metadata:
 spec:
   tls:
   - hosts:
-    - cafe.example.com
+    - cafe.nginx.net
     secretName: cafe-secret
   rules:
-  - host: cafe.example.com
+  - host: cafe.nginx.net
     http:
       paths:
       - path: /tea

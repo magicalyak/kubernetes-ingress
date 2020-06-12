@@ -1,10 +1,10 @@
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: nginx-ingress
   namespace: nginx-ingress
 spec:
-  replicas: 3
+  replicas: 1
   selector:
     matchLabels:
       app: nginx-ingress
@@ -12,22 +12,20 @@ spec:
     metadata:
       labels:
         app: nginx-ingress
+     #annotations:
+       #prometheus.io/scrape: "true"
+       #prometheus.io/port: "9113"
     spec:
       serviceAccountName: nginx-ingress
       volumes:
-      - name: shared-data
-        emptyDir: {}
-      - name: ca-chain
-        secret:
-          secretName: ca-chain
-      - name: apigw-client
-        secret:
-          secretName: apigw-client
-      - name: fruit-client
-        secret:
-          secretName: fruit-client
+      - name: openid-connect-js
+        configMap:
+          name: openid-connect.js
+      - name: openid-connect-server-conf
+        configMap:
+          name: openid-connect.server-conf
       containers:
-      - image: bgautrea/nginx-ingress:v1.5.3-debug
+      - image: magicalyak/nginx-plus:OIDC
         imagePullPolicy: Always
         name: nginx-ingress
         ports:
@@ -35,25 +33,15 @@ spec:
           containerPort: 80
         - name: https
           containerPort: 443
+       #- name: prometheus
+         #containerPort: 9113
         volumeMounts:
-        - name: shared-data
-          mountPath: /etc/nginx/secrets/
-        - name: ca-chain
-          mountPath: /etc/nginx/secrets/ca-chain.cert.pem
-          readOnly: true
-          subPath: ca-chain.cert.pem
-        - name: apigw-client
-          mountPath: /etc/nginx/secrets/client
-          readOnly: true
-          subPath: apigw.pem
-        - name: fruit-client
-          mountPath: /etc/nginx/secrets/fruit-client.cert
-          readOnly: true
-          subPath: tls.crt
-        - name: fruit-client
-          mountPath: /etc/nginx/secrets/fruit-client.key
-          readOnly: true
-          subPath: tls.key
+        - name: openid-connect-js
+          mountPath: /etc/nginx/conf.d/openid_connect.js
+          subPath: openid_connect.js
+        - name: openid-connect-server-conf
+          mountPath: /etc/nginx/conf.d/openid_connect.server_conf
+          subPath: openid_connect.server_conf
         securityContext:
           allowPrivilegeEscalation: true
           runAsUser: 101 #nginx
@@ -74,39 +62,15 @@ spec:
         args:
           - -nginx-plus
           - -nginx-configmaps=$(POD_NAMESPACE)/nginx-config
-          #- -default-server-tls-secret=$(POD_NAMESPACE)/default-server-secret
-          - -default-server-tls-secret=$(POD_NAMESPACE)/duck-secret
-          #- -v=3 # Enables extensive logging. Useful for troubleshooting.
+          - -default-server-tls-secret=$(POD_NAMESPACE)/default-server-secret
+         #- -v=3 # Enables extensive logging. Useful for troubleshooting.
           - -report-ingress-status
-          - -external-service=nginx-ingress
-          - -enable-leader-election
+         # - -external-service=nginx-ingress
+         # - -enable-leader-election
+         #- -enable-prometheus-metrics
+         #- -global-configuration=$(POD_NAMESPACE)/nginx-configuration
           - -enable-custom-resources
-          - -nginx-status-allow-cidrs=192.168.0.0/16  # This is insecure, try to restrict to smaller subnet
-        resources: # Completely optional but if you get lint errors
-          limits:
-            cpu: 10m
-            memory: 20Mi
-          requests:
-            cpu: 10m
-            memory: 20Mi
-      - image: bgautrea/getssl:v3
-        imagePullPolicy: Always
-        name: getkey
-        volumeMounts:
-        - name: shared-data
-          mountPath: /etc/nginx/secrets/
-        env:
-        - name: KID_ENV
-          value: 'XXXXXXXXXXX'
-        - name: AKEY_ENV
-          value: 'XXXXXXXXXXX'
-        command: ["/usr/local/bin/run.sh"]
-        resources: # Completely optional but if you get lint errors
-          limits:
-            cpu: 10m
-            memory: 20Mi
-          requests:
-            cpu: 10m
-            memory: 20Mi
+          - -nginx-status-allow-cidrs=0.0.0.0/0  # This is insecure, try to restrict to smaller subnet
       imagePullSecrets:
-      - name: regcred
+        - name: regcred
+

@@ -70,7 +70,7 @@ function oidcCodeExchange(r) {
                             r.warn("OIDC no refresh token");
                         }
 
-                        // Add opque token to keyval session store
+                        // Add opaque token to keyval session store
                         r.log("OIDC success, creating session " + r.variables.request_id);
                         r.variables.new_session = tokenset.id_token; // Create key-value store entry
                         r.return(302, r.variables.cookie_auth_redir);
@@ -85,28 +85,30 @@ function oidcCodeExchange(r) {
 }
 
 function oidcRefreshRequest(r) {
-    // Pass the refresh token code to the /_refresh location so that it can be
+    // Pass the refresh token to the /_refresh location so that it can be
     // proxied to the IdP in exchange for a new id_token
     r.subrequest("/_refresh", "token=" + r.variables.refresh_token,
         function(reply) {
-            if (reply.status == 504) {
-                r.error("OIDC timeout connecting to IdP when sending refresh request");
-                r.return(504);
-                return;
-            }
-
             if (reply.status != 200) {
-                try {
-                    var errorset = JSON.parse(reply.responseBody);
-                    if (errorset.error) {
-                        r.error("OIDC error from IdP when sending refresh request: " + errorset.error + ", " + errorset.error_description);
-                    } else {
-                        r.error("OIDC unexpected response from IdP when sending refresh request (HTTP " + reply.status + "). " + reply.responseBody);
+                // Refresh request failed, log the reason
+                var error_log = "OIDC refresh failure";
+                if (reply.status == 504) {
+                    error_log += ", timeout waiting for IdP";
+                } else if (reply.status == 400) {
+                    try {
+                        var errorset = JSON.parse(reply.responseBody);
+                        error_log += ": " + errorset.error + " " + errorset.error_description;
+                    } catch (e) {
+                        error_log += ": " + reply.responseBody;
                     }
-                } catch (e) {
-                    r.error("OIDC unexpected response from IdP when sending refresh request (HTTP " + reply.status + "). " + reply.responseBody);
+                } else {
+                    error_log += " "  + reply.status;
                 }
-                r.return(502);
+                r.error(error_log);
+
+                // Clear the refresh token, try again
+                r.variables.refresh_token = "-";
+                r.return(302, r.variables.request_uri);
                 return;
             }
 
@@ -118,7 +120,8 @@ function oidcRefreshRequest(r) {
                     if (tokenset.error) {
                         r.error("OIDC " + tokenset.error + " " + tokenset.error_description);
                     }
-                    r.return(500);
+                    r.variables.refresh_token = "-";
+                    r.return(302, r.variables.request_uri);
                     return;
                 }
 
@@ -126,12 +129,13 @@ function oidcRefreshRequest(r) {
                 r.subrequest("/_id_token_validation", "token=" + tokenset.id_token,
                     function(reply) {
                         if (reply.status != 204) {
-                            r.return(500); // validateIdToken() will log errors
+                            r.variables.refresh_token = "-";
+                            r.return(302, r.variables.request_uri);
                             return;
                         }
 
                         // ID Token is valid, update keyval
-                        r.log("OIDC updating id_token");
+                        r.log("OIDC refresh success, updating id_token");
                         r.variables.session_jwt = tokenset.id_token; // Update key-value store
 
                         // Update refresh token (if we got a new one)
@@ -140,13 +144,13 @@ function oidcRefreshRequest(r) {
                             r.variables.refresh_token = tokenset.refresh_token; // Update key-value store
                         }
 
-                        r.log("OIDC refresh success");
                         r.internalRedirect(r.variables.request_uri); // Continue processing original request
                     }
                 );
             } catch (e) {
-                r.error("OIDC refresh response is not JSON. " + reply.responseBody);
-                r.return(502);
+                r.variables.refresh_token = "-";
+                r.return(302, r.variables.request_uri);
+                return;
             }
         }
     );
@@ -160,13 +164,14 @@ function hashRequestId(r) {
 
 function validateIdToken(r) {
     // Check mandatory claims
-    var required_claims = ["aud", "iat", "iss", "sub"];
+    var required_claims = ["iat", "iss", "sub"]; // aud is checked separately
     var missing_claims = [];
     for (var i in required_claims) {
         if (r.variables["jwt_claim_" + required_claims[i]].length == 0 ) {
             missing_claims.push(required_claims[i]);
         }
     }
+    if (r.variables.jwt_audience.length == 0) missing_claims.push("aud");
     if (missing_claims.length) {
         r.error("OIDC ID Token validation error: missing claim(s) " + missing_claims.join(" "));
         r.return(403);
@@ -182,8 +187,9 @@ function validateIdToken(r) {
     }
 
     // Audience matching
-    if (r.variables.jwt_claim_aud != r.variables.oidc_client) {
-        r.error("OIDC ID Token validation error: aud claim (" + r.variables.jwt_claim_aud + ") does not match configured $oidc_client (" + r.variables.oidc_client + ")");
+    var aud = r.variables.jwt_audience.split(",");
+    if (!aud.includes(r.variables.oidc_client)) {
+        r.error("OIDC ID Token validation error: aud claim (" + r.variables.jwt_audience + ") does not include configured $oidc_client (" + r.variables.oidc_client + ")");
         valid_token = false;
     }
 
