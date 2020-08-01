@@ -17,7 +17,7 @@ RUN chmod 644 /etc/ssl/nginx/*
 # Install NGINX Plus
 RUN set -x \
   && apt-get update \
-  && apt-get install --no-install-recommends --no-install-suggests -y apt-transport-https ca-certificates gnupg1 libcap2-bin \
+  && apt-get install --no-install-recommends --no-install-suggests -y apt-transport-https ca-certificates gnupg1 libcap2-bin build-essential git wget tar make curl dnsutils \
   && \
   NGINX_GPGKEY=573BFD6B3D8FBC641079A6ABABF5BD827BD9BF62; \
   found=''; \
@@ -37,6 +37,9 @@ RUN set -x \
   && echo "Acquire::https::plus-pkgs.nginx.com::SslKey      \"/etc/ssl/nginx/nginx-repo.key\";" >> /etc/apt/apt.conf.d/90nginx \
   && echo "Acquire::https::plus-pkgs.nginx.com::User-Agent  \"k8s-ic-$IC_VERSION-apt\";" >> /etc/apt/apt.conf.d/90nginx \
   && printf "deb https://plus-pkgs.nginx.com/debian buster nginx-plus\n" > /etc/apt/sources.list.d/nginx-plus.list \
+  && wget https://hg.nginx.org/pkg-oss/raw-file/default/build_module.sh \
+  && chmod a+x build_module.sh \
+  && ./build_module.sh -r 22 https://github.com/chobits/ngx_http_proxy_connect_module.git \
 	&& apt-get update && apt-get install -y nginx-plus=${NGINX_PLUS_VERSION} nginx-plus-module-njs \
   && setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx \
   && setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx-debug \
@@ -74,6 +77,7 @@ COPY internal/configs/version1/nginx-plus.ingress.tmpl \
 # Uncomment the line below if you would like to add the default.pem to the image
 # and use it as a certificate and key for the default server
 # ADD default.pem /etc/nginx/secrets/default
+
 
 USER nginx
 

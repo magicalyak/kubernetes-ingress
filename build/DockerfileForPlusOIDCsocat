@@ -17,7 +17,7 @@ RUN chmod 644 /etc/ssl/nginx/*
 # Install NGINX Plus
 RUN set -x \
   && apt-get update \
-  && apt-get install --no-install-recommends --no-install-suggests -y apt-transport-https ca-certificates gnupg1 libcap2-bin \
+  && apt-get install --no-install-recommends --no-install-suggests -y apt-transport-https ca-certificates gnupg1 libcap2-bin socat curl dnsutils \
   && \
   NGINX_GPGKEY=573BFD6B3D8FBC641079A6ABABF5BD827BD9BF62; \
   found=''; \
@@ -45,10 +45,28 @@ RUN set -x \
   && rm -rf /etc/ssl/nginx \
   && rm /etc/apt/apt.conf.d/90nginx /etc/apt/sources.list.d/nginx-plus.list
 
+# Create custom startup script
+ARG DOMAIN
+ARG PROXY_AUTH
+ARG PROXY_IP
+ARG PROXY_PORT
+ARG SOCAT_PORT
+ENV DOMAIN=$DOMAIN
+ENV PROXY_AUTH=$PROXY_AUTH
+ENV PROXY_IP=$PROXY_IP
+ENV PROXY_PORT=$PROXY_PORT
+ENV SOCAT_PORT=$SOCAT_PORT
+
+RUN printf "#!/bin/sh\n\n" > start.sh \
+  && printf "socat -d -d -lf /var/log/socat.log TCP4-LISTEN:${SOCAT_PORT},reuseaddr,fork PROXY:${PROXY_IP}:${DOMAIN},proxyport=${PROXY_PORT},proxyauth=${PROXY_AUTH} &\n" >> start.sh \
+  && printf "nginx -g 'daemon off;'\n" >> start.sh \
+  && chmod +x start.sh \
+  && touch /var/log/socat.log
 
 # forward nginx access and error logs to stdout and stderr of the ingress
 # controller process
-RUN ln -sf /proc/1/fd/1 /var/log/nginx/access.log \
+RUN ln -sf /dev/stdout /var/log/socat.log \
+  && ln -sf /proc/1/fd/1 /var/log/nginx/access.log \
   && ln -sf /proc/1/fd/1 /var/log/nginx/stream-access.log \
   && ln -sf /proc/1/fd/2 /var/log/nginx/error.log \
   && ln -sf /proc/1/fd/1 /var/log/nginx/oidc_auth.log \
@@ -64,7 +82,7 @@ RUN  mkdir -p /var/lib/nginx \
   && apt-get remove --purge -y libcap2-bin \
   && rm /etc/nginx/conf.d/* 
 
-EXPOSE 80 443
+EXPOSE 80 443 8080
 
 COPY internal/configs/version1/nginx-plus.ingress.tmpl \
     internal/configs/version1/nginx-plus.tmpl \
@@ -95,3 +113,4 @@ RUN CGO_ENABLED=0 GOFLAGS='-mod=vendor' \
 
 FROM base AS container
 COPY --from=builder /nginx-ingress /
+CMD ["sh", "/start.sh"]
