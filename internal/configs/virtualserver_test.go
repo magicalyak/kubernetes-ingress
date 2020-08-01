@@ -8,7 +8,9 @@ import (
 	"github.com/nginxinc/kubernetes-ingress/internal/configs/version2"
 	"github.com/nginxinc/kubernetes-ingress/internal/nginx"
 	conf_v1 "github.com/nginxinc/kubernetes-ingress/pkg/apis/configuration/v1"
+	conf_v1alpha1 "github.com/nginxinc/kubernetes-ingress/pkg/apis/configuration/v1alpha1"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 func TestVirtualServerExString(t *testing.T) {
@@ -433,6 +435,7 @@ func TestGenerateVirtualServerConfig(t *testing.T) {
 				Keepalive: 16,
 			},
 		},
+		HTTPSnippets: []string{""},
 		Server: version2.Server{
 			ServerName:      "cafe.example.com",
 			StatusZone:      "cafe.example.com",
@@ -622,6 +625,7 @@ func TestGenerateVirtualServerConfigWithSpiffeCerts(t *testing.T) {
 				Keepalive: 16,
 			},
 		},
+		HTTPSnippets: []string{""},
 		Server: version2.Server{
 			ServerName:      "cafe.example.com",
 			StatusZone:      "cafe.example.com",
@@ -833,6 +837,7 @@ func TestGenerateVirtualServerConfigForVirtualServerWithSplits(t *testing.T) {
 				},
 			},
 		},
+		HTTPSnippets: []string{""},
 		Server: version2.Server{
 			ServerName: "cafe.example.com",
 			StatusZone: "cafe.example.com",
@@ -1108,6 +1113,7 @@ func TestGenerateVirtualServerConfigForVirtualServerWithMatches(t *testing.T) {
 				},
 			},
 		},
+		HTTPSnippets: []string{""},
 		Server: version2.Server{
 			ServerName: "cafe.example.com",
 			StatusZone: "cafe.example.com",
@@ -1177,6 +1183,679 @@ func TestGenerateVirtualServerConfigForVirtualServerWithMatches(t *testing.T) {
 
 	if len(warnings) != 0 {
 		t.Errorf("GenerateVirtualServerConfig returned warnings: %v", vsc.warnings)
+	}
+}
+
+func TestGenerateVirtualServerConfigForVirtualServerWithReturns(t *testing.T) {
+	virtualServerEx := VirtualServerEx{
+		VirtualServer: &conf_v1.VirtualServer{
+			ObjectMeta: meta_v1.ObjectMeta{
+				Name:      "returns",
+				Namespace: "default",
+			},
+			Spec: conf_v1.VirtualServerSpec{
+				Host: "example.com",
+				Routes: []conf_v1.Route{
+					{
+						Path: "/return",
+						Action: &conf_v1.Action{
+							Return: &conf_v1.ActionReturn{
+								Body: "hello 0",
+							},
+						},
+					},
+					{
+						Path: "/splits-with-return",
+						Splits: []conf_v1.Split{
+							{
+								Weight: 90,
+								Action: &conf_v1.Action{
+									Return: &conf_v1.ActionReturn{
+										Body: "hello 1",
+									},
+								},
+							},
+							{
+								Weight: 10,
+								Action: &conf_v1.Action{
+									Return: &conf_v1.ActionReturn{
+										Body: "hello 2",
+									},
+								},
+							},
+						},
+					},
+					{
+						Path: "/matches-with-return",
+						Matches: []conf_v1.Match{
+							{
+								Conditions: []conf_v1.Condition{
+									{
+										Header: "x-version",
+										Value:  "v2",
+									},
+								},
+								Action: &conf_v1.Action{
+									Return: &conf_v1.ActionReturn{
+										Body: "hello 3",
+									},
+								},
+							},
+						},
+						Action: &conf_v1.Action{
+							Return: &conf_v1.ActionReturn{
+								Body: "hello 4",
+							},
+						},
+					},
+					{
+						Path:  "/more",
+						Route: "default/more-returns",
+					},
+				},
+			},
+		},
+		VirtualServerRoutes: []*conf_v1.VirtualServerRoute{
+			{
+				ObjectMeta: meta_v1.ObjectMeta{
+					Name:      "more-returns",
+					Namespace: "default",
+				},
+				Spec: conf_v1.VirtualServerRouteSpec{
+					Host: "example.com",
+					Subroutes: []conf_v1.Route{
+						{
+							Path: "/more/return",
+							Action: &conf_v1.Action{
+								Return: &conf_v1.ActionReturn{
+									Body: "hello 5",
+								},
+							},
+						},
+						{
+							Path: "/more/splits-with-return",
+							Splits: []conf_v1.Split{
+								{
+									Weight: 90,
+									Action: &conf_v1.Action{
+										Return: &conf_v1.ActionReturn{
+											Body: "hello 6",
+										},
+									},
+								},
+								{
+									Weight: 10,
+									Action: &conf_v1.Action{
+										Return: &conf_v1.ActionReturn{
+											Body: "hello 7",
+										},
+									},
+								},
+							},
+						},
+						{
+							Path: "/more/matches-with-return",
+							Matches: []conf_v1.Match{
+								{
+									Conditions: []conf_v1.Condition{
+										{
+											Header: "x-version",
+											Value:  "v2",
+										},
+									},
+									Action: &conf_v1.Action{
+										Return: &conf_v1.ActionReturn{
+											Body: "hello 8",
+										},
+									},
+								},
+							},
+							Action: &conf_v1.Action{
+								Return: &conf_v1.ActionReturn{
+									Body: "hello 9",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	baseCfgParams := ConfigParams{}
+
+	expected := version2.VirtualServerConfig{
+		Maps: []version2.Map{
+			{
+				Source:   "$http_x_version",
+				Variable: "$vs_default_returns_matches_0_match_0_cond_0",
+				Parameters: []version2.Parameter{
+					{
+						Value:  `"v2"`,
+						Result: "1",
+					},
+					{
+						Value:  "default",
+						Result: "0",
+					},
+				},
+			},
+			{
+				Source:   "$vs_default_returns_matches_0_match_0_cond_0",
+				Variable: "$vs_default_returns_matches_0",
+				Parameters: []version2.Parameter{
+					{
+						Value:  "~^1",
+						Result: "/internal_location_matches_0_match_0",
+					},
+					{
+						Value:  "default",
+						Result: "/internal_location_matches_0_default",
+					},
+				},
+			},
+			{
+				Source:   "$http_x_version",
+				Variable: "$vs_default_returns_matches_1_match_0_cond_0",
+				Parameters: []version2.Parameter{
+					{
+						Value:  `"v2"`,
+						Result: "1",
+					},
+					{
+						Value:  "default",
+						Result: "0",
+					},
+				},
+			},
+			{
+				Source:   "$vs_default_returns_matches_1_match_0_cond_0",
+				Variable: "$vs_default_returns_matches_1",
+				Parameters: []version2.Parameter{
+					{
+						Value:  "~^1",
+						Result: "/internal_location_matches_1_match_0",
+					},
+					{
+						Value:  "default",
+						Result: "/internal_location_matches_1_default",
+					},
+				},
+			},
+		},
+		SplitClients: []version2.SplitClient{
+			{
+				Source:   "$request_id",
+				Variable: "$vs_default_returns_splits_0",
+				Distributions: []version2.Distribution{
+					{
+						Weight: "90%",
+						Value:  "/internal_location_splits_0_split_0",
+					},
+					{
+						Weight: "10%",
+						Value:  "/internal_location_splits_0_split_1",
+					},
+				},
+			},
+			{
+				Source:   "$request_id",
+				Variable: "$vs_default_returns_splits_1",
+				Distributions: []version2.Distribution{
+					{
+						Weight: "90%",
+						Value:  "/internal_location_splits_1_split_0",
+					},
+					{
+						Weight: "10%",
+						Value:  "/internal_location_splits_1_split_1",
+					},
+				},
+			},
+		},
+		HTTPSnippets: []string{""},
+		Server: version2.Server{
+			ServerName: "example.com",
+			StatusZone: "example.com",
+			InternalRedirectLocations: []version2.InternalRedirectLocation{
+				{
+					Path:        "/splits-with-return",
+					Destination: "$vs_default_returns_splits_0",
+				},
+				{
+					Path:        "/matches-with-return",
+					Destination: "$vs_default_returns_matches_0",
+				},
+				{
+					Path:        "/more/splits-with-return",
+					Destination: "$vs_default_returns_splits_1",
+				},
+				{
+					Path:        "/more/matches-with-return",
+					Destination: "$vs_default_returns_matches_1",
+				},
+			},
+			ReturnLocations: []version2.ReturnLocation{
+				{
+					Name:        "@return_0",
+					DefaultType: "text/plain",
+					Return: version2.Return{
+						Code: 0,
+						Text: "hello 0",
+					},
+				},
+				{
+					Name:        "@return_1",
+					DefaultType: "text/plain",
+					Return: version2.Return{
+						Code: 0,
+						Text: "hello 1",
+					},
+				},
+				{
+					Name:        "@return_2",
+					DefaultType: "text/plain",
+					Return: version2.Return{
+						Code: 0,
+						Text: "hello 2",
+					},
+				},
+				{
+					Name:        "@return_3",
+					DefaultType: "text/plain",
+					Return: version2.Return{
+						Code: 0,
+						Text: "hello 3",
+					},
+				},
+				{
+					Name:        "@return_4",
+					DefaultType: "text/plain",
+					Return: version2.Return{
+						Code: 0,
+						Text: "hello 4",
+					},
+				},
+				{
+					Name:        "@return_5",
+					DefaultType: "text/plain",
+					Return: version2.Return{
+						Code: 0,
+						Text: "hello 5",
+					},
+				},
+				{
+					Name:        "@return_6",
+					DefaultType: "text/plain",
+					Return: version2.Return{
+						Code: 0,
+						Text: "hello 6",
+					},
+				},
+				{
+					Name:        "@return_7",
+					DefaultType: "text/plain",
+					Return: version2.Return{
+						Code: 0,
+						Text: "hello 7",
+					},
+				},
+				{
+					Name:        "@return_8",
+					DefaultType: "text/plain",
+					Return: version2.Return{
+						Code: 0,
+						Text: "hello 8",
+					},
+				},
+				{
+					Name:        "@return_9",
+					DefaultType: "text/plain",
+					Return: version2.Return{
+						Code: 0,
+						Text: "hello 9",
+					},
+				},
+			},
+			Locations: []version2.Location{
+				{
+					Path:                 "/return",
+					ProxyInterceptErrors: true,
+					ErrorPages: []version2.ErrorPage{
+						{
+							Name:         "@return_0",
+							Codes:        "418",
+							ResponseCode: 200,
+						},
+					},
+					InternalProxyPass: "http://unix:/var/lib/nginx/nginx-418-server.sock",
+				},
+				{
+					Path:                 "/internal_location_splits_0_split_0",
+					ProxyInterceptErrors: true,
+					ErrorPages: []version2.ErrorPage{
+						{
+							Name:         "@return_1",
+							Codes:        "418",
+							ResponseCode: 200,
+						},
+					},
+					InternalProxyPass: "http://unix:/var/lib/nginx/nginx-418-server.sock",
+				},
+				{
+					Path:                 "/internal_location_splits_0_split_1",
+					ProxyInterceptErrors: true,
+					ErrorPages: []version2.ErrorPage{
+						{
+							Name:         "@return_2",
+							Codes:        "418",
+							ResponseCode: 200,
+						},
+					},
+					InternalProxyPass: "http://unix:/var/lib/nginx/nginx-418-server.sock",
+				},
+				{
+					Path:                 "/internal_location_matches_0_match_0",
+					ProxyInterceptErrors: true,
+					ErrorPages: []version2.ErrorPage{
+						{
+							Name:         "@return_3",
+							Codes:        "418",
+							ResponseCode: 200,
+						},
+					},
+					InternalProxyPass: "http://unix:/var/lib/nginx/nginx-418-server.sock",
+				},
+				{
+					Path:                 "/internal_location_matches_0_default",
+					ProxyInterceptErrors: true,
+					ErrorPages: []version2.ErrorPage{
+						{
+							Name:         "@return_4",
+							Codes:        "418",
+							ResponseCode: 200,
+						},
+					},
+					InternalProxyPass: "http://unix:/var/lib/nginx/nginx-418-server.sock",
+				},
+				{
+					Path:                 "/more/return",
+					ProxyInterceptErrors: true,
+					ErrorPages: []version2.ErrorPage{
+						{
+							Name:         "@return_5",
+							Codes:        "418",
+							ResponseCode: 200,
+						},
+					},
+					InternalProxyPass: "http://unix:/var/lib/nginx/nginx-418-server.sock",
+				},
+				{
+					Path:                 "/internal_location_splits_1_split_0",
+					ProxyInterceptErrors: true,
+					ErrorPages: []version2.ErrorPage{
+						{
+							Name:         "@return_6",
+							Codes:        "418",
+							ResponseCode: 200,
+						},
+					},
+					InternalProxyPass: "http://unix:/var/lib/nginx/nginx-418-server.sock",
+				},
+				{
+					Path:                 "/internal_location_splits_1_split_1",
+					ProxyInterceptErrors: true,
+					ErrorPages: []version2.ErrorPage{
+						{
+							Name:         "@return_7",
+							Codes:        "418",
+							ResponseCode: 200,
+						},
+					},
+					InternalProxyPass: "http://unix:/var/lib/nginx/nginx-418-server.sock",
+				},
+				{
+					Path:                 "/internal_location_matches_1_match_0",
+					ProxyInterceptErrors: true,
+					ErrorPages: []version2.ErrorPage{
+						{
+							Name:         "@return_8",
+							Codes:        "418",
+							ResponseCode: 200,
+						},
+					},
+					InternalProxyPass: "http://unix:/var/lib/nginx/nginx-418-server.sock",
+				},
+				{
+					Path:                 "/internal_location_matches_1_default",
+					ProxyInterceptErrors: true,
+					ErrorPages: []version2.ErrorPage{
+						{
+							Name:         "@return_9",
+							Codes:        "418",
+							ResponseCode: 200,
+						},
+					},
+					InternalProxyPass: "http://unix:/var/lib/nginx/nginx-418-server.sock",
+				},
+			},
+		},
+	}
+
+	isPlus := false
+	isResolverConfigured := false
+	tlsPemFileName := ""
+	vsc := newVirtualServerConfigurator(&baseCfgParams, isPlus, isResolverConfigured, &StaticConfigParams{})
+	result, warnings := vsc.GenerateVirtualServerConfig(&virtualServerEx, tlsPemFileName)
+	if !reflect.DeepEqual(result, expected) {
+		t.Errorf("GenerateVirtualServerConfig returned \n%+v but expected \n%+v", result, expected)
+	}
+
+	if len(warnings) != 0 {
+		t.Errorf("GenerateVirtualServerConfig returned warnings: %v", vsc.warnings)
+	}
+}
+
+func TestGeneratePolicies(t *testing.T) {
+	var owner runtime.Object // nil is OK for the unit test
+	ownerNamespace := "default"
+
+	tests := []struct {
+		policyRefs []conf_v1.PolicyReference
+		policies   map[string]*conf_v1alpha1.Policy
+		expected   policiesCfg
+		msg        string
+	}{
+		{
+			policyRefs: []conf_v1.PolicyReference{
+				{
+					Name:      "allow-policy",
+					Namespace: "default",
+				},
+			},
+			policies: map[string]*conf_v1alpha1.Policy{
+				"default/allow-policy": {
+					Spec: conf_v1alpha1.PolicySpec{
+						AccessControl: &conf_v1alpha1.AccessControl{
+							Allow: []string{"127.0.0.1"},
+						},
+					},
+				},
+			},
+			expected: policiesCfg{
+				Allow: []string{"127.0.0.1"},
+			},
+			msg: "explicit reference",
+		},
+		{
+			policyRefs: []conf_v1.PolicyReference{
+				{
+					Name: "allow-policy",
+				},
+			},
+			policies: map[string]*conf_v1alpha1.Policy{
+				"default/allow-policy": {
+					Spec: conf_v1alpha1.PolicySpec{
+						AccessControl: &conf_v1alpha1.AccessControl{
+							Allow: []string{"127.0.0.1"},
+						},
+					},
+				},
+			},
+			expected: policiesCfg{
+				Allow: []string{"127.0.0.1"},
+			},
+			msg: "implicit reference",
+		},
+		{
+			policyRefs: []conf_v1.PolicyReference{
+				{
+					Name: "allow-policy-1",
+				},
+				{
+					Name: "allow-policy-2",
+				},
+			},
+			policies: map[string]*conf_v1alpha1.Policy{
+				"default/allow-policy-1": {
+					Spec: conf_v1alpha1.PolicySpec{
+						AccessControl: &conf_v1alpha1.AccessControl{
+							Allow: []string{"127.0.0.1"},
+						},
+					},
+				},
+				"default/allow-policy-2": {
+					Spec: conf_v1alpha1.PolicySpec{
+						AccessControl: &conf_v1alpha1.AccessControl{
+							Allow: []string{"127.0.0.2"},
+						},
+					},
+				},
+			},
+			expected: policiesCfg{
+				Allow: []string{"127.0.0.1", "127.0.0.2"},
+			},
+			msg: "merging",
+		},
+	}
+
+	vsc := newVirtualServerConfigurator(&ConfigParams{}, false, false, &StaticConfigParams{})
+
+	for _, test := range tests {
+		result := vsc.generatePolicies(owner, ownerNamespace, test.policyRefs, test.policies)
+		if !reflect.DeepEqual(result, test.expected) {
+			t.Errorf("generatePolicies() returned \n%+v but expected \n%+v for the case of %s", result, test.expected,
+				test.msg)
+		}
+		if len(vsc.warnings) > 0 {
+			t.Errorf("generatePolicies() returned unexpected warnings %v for the case of %s", vsc.warnings, test.msg)
+		}
+	}
+}
+
+func TestGeneratePoliciesFails(t *testing.T) {
+	var owner runtime.Object // nil is OK for the unit test
+	ownerNamespace := "default"
+
+	tests := []struct {
+		policyRefs []conf_v1.PolicyReference
+		policies   map[string]*conf_v1alpha1.Policy
+		expected   policiesCfg
+		msg        string
+	}{
+		{
+			policyRefs: []conf_v1.PolicyReference{
+				{
+					Name:      "allow-policy",
+					Namespace: "default",
+				},
+			},
+			policies: map[string]*conf_v1alpha1.Policy{},
+			expected: policiesCfg{
+				Allow: []string{},
+				Deny:  []string{},
+				ErrorReturn: &version2.Return{
+					Code: 500,
+				},
+			},
+			msg: "missing policy",
+		},
+		{
+			policyRefs: []conf_v1.PolicyReference{
+				{
+					Name: "allow-policy",
+				},
+				{
+					Name: "deny-policy",
+				},
+			},
+			policies: map[string]*conf_v1alpha1.Policy{
+				"default/allow-policy": {
+					Spec: conf_v1alpha1.PolicySpec{
+						AccessControl: &conf_v1alpha1.AccessControl{
+							Allow: []string{"127.0.0.1"},
+						},
+					},
+				},
+				"default/deny-policy": {
+					Spec: conf_v1alpha1.PolicySpec{
+						AccessControl: &conf_v1alpha1.AccessControl{
+							Deny: []string{"127.0.0.2"},
+						},
+					},
+				},
+			},
+			expected: policiesCfg{
+				Allow: []string{"127.0.0.1"},
+				Deny:  []string{"127.0.0.2"},
+			},
+			msg: "conflicting policies",
+		},
+	}
+
+	vsc := newVirtualServerConfigurator(&ConfigParams{}, false, false, &StaticConfigParams{})
+
+	for _, test := range tests {
+		result := vsc.generatePolicies(owner, ownerNamespace, test.policyRefs, test.policies)
+		if !reflect.DeepEqual(result, test.expected) {
+			t.Errorf("generatePolicies() returned \n%+v but expected \n%+v for the case of %s", result, test.expected,
+				test.msg)
+		}
+		if len(vsc.warnings) == 0 {
+			t.Errorf("generatePolicies() returned no warnings for the case of %s", test.msg)
+		}
+	}
+}
+
+func TestAddPoliciesCfgToLocations(t *testing.T) {
+	cfg := policiesCfg{
+		Allow: []string{"127.0.0.1"},
+		Deny:  []string{"127.0.0.2"},
+		ErrorReturn: &version2.Return{
+			Code: 400,
+		},
+	}
+
+	locations := []version2.Location{
+		{
+			Path: "/",
+		},
+	}
+
+	expectedLocations := []version2.Location{
+		{
+			Path:  "/",
+			Allow: []string{"127.0.0.1"},
+			Deny:  []string{"127.0.0.2"},
+			PoliciesErrorReturn: &version2.Return{
+				Code: 400,
+			},
+		},
+	}
+
+	addPoliciesCfgToLocations(cfg, locations)
+	if !reflect.DeepEqual(locations, expectedLocations) {
+		t.Errorf("addPoliciesCfgToLocations() returned \n%+v but expected \n%+v", locations, expectedLocations)
 	}
 }
 
@@ -1409,6 +2088,46 @@ func TestGenerateString(t *testing.T) {
 	}
 }
 
+func TestGenerateSnippets(t *testing.T) {
+	tests := []struct {
+		enableSnippets bool
+		s              string
+		defaultS       []string
+		expected       []string
+	}{
+		{
+			true,
+			"test",
+			[]string{""},
+			[]string{"test"},
+		},
+		{
+			true,
+			"",
+			[]string{"default"},
+			[]string{"default"},
+		},
+		{
+			true,
+			"test\none\ntwo",
+			[]string{""},
+			[]string{"test", "one", "two"},
+		},
+		{
+			false,
+			"test",
+			nil,
+			nil,
+		},
+	}
+	for _, test := range tests {
+		result := generateSnippets(test.enableSnippets, test.s, test.defaultS)
+		if !reflect.DeepEqual(result, test.expected) {
+			t.Errorf("generateSnippets() return %v, but expected %v", result, test.expected)
+		}
+	}
+}
+
 func TestGenerateBuffer(t *testing.T) {
 	tests := []struct {
 		inputS   *conf_v1.UpstreamBuffers
@@ -1446,10 +2165,11 @@ func TestGenerateLocationForProxying(t *testing.T) {
 	}
 	path := "/"
 	upstreamName := "test-upstream"
+	vsLocSnippets := []string{"# vs location snippet"}
 
 	expected := version2.Location{
 		Path:                     "/",
-		Snippets:                 []string{"# location snippet"},
+		Snippets:                 vsLocSnippets,
 		ProxyConnectTimeout:      "30s",
 		ProxyReadTimeout:         "31s",
 		ProxySendTimeout:         "32s",
@@ -1465,7 +2185,7 @@ func TestGenerateLocationForProxying(t *testing.T) {
 		ProxyPassRequestHeaders:  true,
 	}
 
-	result := generateLocationForProxying(path, upstreamName, conf_v1.Upstream{}, &cfgParams, nil, false, 0, "", nil, "")
+	result := generateLocationForProxying(path, upstreamName, conf_v1.Upstream{}, &cfgParams, nil, false, 0, "", nil, "", vsLocSnippets)
 	if !reflect.DeepEqual(result, expected) {
 		t.Errorf("generateLocationForProxying() returned \n%v but expected \n%v", result, expected)
 	}
@@ -1507,30 +2227,144 @@ func TestGenerateReturnBlock(t *testing.T) {
 
 }
 
-func TestGenerateLocationForReturnBlock(t *testing.T) {
-	cfgParams := ConfigParams{
-		LocationSnippets: []string{"# location snippet"},
-	}
-	defaultType := "application/json"
-	path := "/"
-	returnBlock := &version2.Return{
-		Code: 301,
-		Text: "http://www.nginx.com",
-	}
+func TestGenerateLocationForReturn(t *testing.T) {
+	tests := []struct {
+		actionReturn           *conf_v1.ActionReturn
+		expectedLocation       version2.Location
+		expectedReturnLocation *version2.ReturnLocation
+		msg                    string
+	}{
+		{
+			actionReturn: &conf_v1.ActionReturn{
+				Body: "hello",
+			},
 
-	expected := version2.Location{
-		Path:        "/",
-		Snippets:    []string{"# location snippet"},
-		DefaultType: defaultType,
-		Return: &version2.Return{
-			Text: "http://www.nginx.com",
-			Code: 301,
+			expectedLocation: version2.Location{
+				Path:     "/",
+				Snippets: []string{"# location snippet"},
+				ErrorPages: []version2.ErrorPage{
+					{
+						Name:         "@return_1",
+						Codes:        "418",
+						ResponseCode: 200,
+					},
+				},
+				ProxyInterceptErrors: true,
+				InternalProxyPass:    "http://unix:/var/lib/nginx/nginx-418-server.sock",
+			},
+			expectedReturnLocation: &version2.ReturnLocation{
+				Name:        "@return_1",
+				DefaultType: "text/plain",
+				Return: version2.Return{
+					Code: 0,
+					Text: "hello",
+				},
+			},
+			msg: "return without code and type",
+		},
+		{
+			actionReturn: &conf_v1.ActionReturn{
+				Code: 400,
+				Type: "text/html",
+				Body: "hello",
+			},
+
+			expectedLocation: version2.Location{
+				Path:     "/",
+				Snippets: []string{"# location snippet"},
+				ErrorPages: []version2.ErrorPage{
+					{
+						Name:         "@return_1",
+						Codes:        "418",
+						ResponseCode: 400,
+					},
+				},
+				ProxyInterceptErrors: true,
+				InternalProxyPass:    "http://unix:/var/lib/nginx/nginx-418-server.sock",
+			},
+			expectedReturnLocation: &version2.ReturnLocation{
+				Name:        "@return_1",
+				DefaultType: "text/html",
+				Return: version2.Return{
+					Code: 0,
+					Text: "hello",
+				},
+			},
+			msg: "return with all fields defined",
+		},
+	}
+	path := "/"
+	snippets := []string{"# location snippet"}
+	returnLocationIndex := 1
+
+	for _, test := range tests {
+		location, returnLocation := generateLocationForReturn(path, snippets, test.actionReturn, returnLocationIndex)
+		if !reflect.DeepEqual(location, test.expectedLocation) {
+			t.Errorf("generateLocationForReturn() returned  \n%+v but expected \n%+v for the case of %s",
+				location, test.expectedLocation, test.msg)
+		}
+		if !reflect.DeepEqual(returnLocation, test.expectedReturnLocation) {
+			t.Errorf("generateLocationForReturn() returned  \n%+v but expected \n%+v for the case of %s",
+				returnLocation, test.expectedReturnLocation, test.msg)
+		}
+	}
+}
+
+func TestGenerateLocationForRedirect(t *testing.T) {
+	tests := []struct {
+		redirect *conf_v1.ActionRedirect
+		expected version2.Location
+		msg      string
+	}{
+		{
+			redirect: &conf_v1.ActionRedirect{
+				URL: "http://nginx.org",
+			},
+
+			expected: version2.Location{
+				Path:     "/",
+				Snippets: []string{"# location snippet"},
+				ErrorPages: []version2.ErrorPage{
+					{
+						Name:         "http://nginx.org",
+						Codes:        "418",
+						ResponseCode: 301,
+					},
+				},
+				ProxyInterceptErrors: true,
+				InternalProxyPass:    "http://unix:/var/lib/nginx/nginx-418-server.sock",
+			},
+			msg: "redirect without code",
+		},
+		{
+			redirect: &conf_v1.ActionRedirect{
+				Code: 302,
+				URL:  "http://nginx.org",
+			},
+
+			expected: version2.Location{
+				Path:     "/",
+				Snippets: []string{"# location snippet"},
+				ErrorPages: []version2.ErrorPage{
+					{
+						Name:         "http://nginx.org",
+						Codes:        "418",
+						ResponseCode: 302,
+					},
+				},
+				ProxyInterceptErrors: true,
+				InternalProxyPass:    "http://unix:/var/lib/nginx/nginx-418-server.sock",
+			},
+			msg: "redirect with all fields defined",
 		},
 	}
 
-	result := generateLocationForReturnBlock(path, cfgParams.LocationSnippets, returnBlock, defaultType)
-	if !reflect.DeepEqual(result, expected) {
-		t.Errorf("generateLocationForReturnBlock() returned %v but expected %v", result, expected)
+	for _, test := range tests {
+		result := generateLocationForRedirect("/", []string{"# location snippet"}, test.redirect)
+		if !reflect.DeepEqual(result, test.expected) {
+			t.Errorf("generateLocationForReturn() returned \n%+v but expected \n%+v for the case of %s",
+				result, test.expected, test.msg)
+		}
 	}
 }
 
@@ -1893,9 +2727,17 @@ func TestGenerateSplits(t *testing.T) {
 			},
 		},
 		{
-			Weight: 10,
+			Weight: 9,
 			Action: &conf_v1.Action{
 				Pass: "coffee-v2",
+			},
+		},
+		{
+			Weight: 1,
+			Action: &conf_v1.Action{
+				Return: &conf_v1.ActionReturn{
+					Body: "hello",
+				},
 			},
 		},
 	}
@@ -1918,6 +2760,8 @@ func TestGenerateSplits(t *testing.T) {
 			Service: "coffee-v2",
 		},
 	}
+	locSnippet := "# location snippet"
+	enableSnippets := true
 	errorPages := []conf_v1.ErrorPage{
 		{
 			Codes: []int{400, 500},
@@ -1957,8 +2801,12 @@ func TestGenerateSplits(t *testing.T) {
 				Value:  "/internal_location_splits_1_split_0",
 			},
 			{
-				Weight: "10%",
+				Weight: "9%",
 				Value:  "/internal_location_splits_1_split_1",
+			},
+			{
+				Weight: "1%",
+				Value:  "/internal_location_splits_1_split_2",
 			},
 		},
 	}
@@ -1986,6 +2834,7 @@ func TestGenerateSplits(t *testing.T) {
 			},
 			ProxySSLName:            "coffee-v1.default.svc",
 			ProxyPassRequestHeaders: true,
+			Snippets:                []string{locSnippet},
 		},
 		{
 			Path:                     "/internal_location_splits_1_split_1",
@@ -2009,15 +2858,43 @@ func TestGenerateSplits(t *testing.T) {
 			},
 			ProxySSLName:            "coffee-v2.default.svc",
 			ProxyPassRequestHeaders: true,
+			Snippets:                []string{locSnippet},
+		},
+		{
+			Path:                 "/internal_location_splits_1_split_2",
+			ProxyInterceptErrors: true,
+			ErrorPages: []version2.ErrorPage{
+				{
+					Name:         "@return_1",
+					Codes:        "418",
+					ResponseCode: 200,
+				},
+			},
+			InternalProxyPass: "http://unix:/var/lib/nginx/nginx-418-server.sock",
 		},
 	}
+	expectedReturnLocations := []version2.ReturnLocation{
+		{
+			Name:        "@return_1",
+			DefaultType: "text/plain",
+			Return: version2.Return{
+				Code: 0,
+				Text: "hello",
+			},
+		},
+	}
+	returnLocationIndex := 1
 
-	resultSplitClient, resultLocations := generateSplits(splits, upstreamNamer, crUpstreams, variableNamer, scIndex, &cfgParams, errorPages, 0, originalPath)
+	resultSplitClient, resultLocations, resultReturnLocations := generateSplits(splits, upstreamNamer, crUpstreams,
+		variableNamer, scIndex, &cfgParams, errorPages, 0, originalPath, locSnippet, enableSnippets, returnLocationIndex)
 	if !reflect.DeepEqual(resultSplitClient, expectedSplitClient) {
 		t.Errorf("generateSplits() returned \n%+v but expected \n%+v", resultSplitClient, expectedSplitClient)
 	}
 	if !reflect.DeepEqual(resultLocations, expectedLocations) {
 		t.Errorf("generateSplits() returned \n%+v but expected \n%+v", resultLocations, expectedLocations)
+	}
+	if !reflect.DeepEqual(resultReturnLocations, expectedReturnLocations) {
+		t.Errorf("generateSplits() returned \n%+v but expected \n%+v", resultReturnLocations, expectedReturnLocations)
 	}
 
 }
@@ -2096,6 +2973,8 @@ func TestGenerateDefaultSplitsConfig(t *testing.T) {
 	}
 
 	cfgParams := ConfigParams{}
+	locSnippet := ""
+	enableSnippets := false
 	crUpstreams := map[string]conf_v1.Upstream{
 		"vs_default_cafe_coffee-v1": {
 			Service: "coffee-v1",
@@ -2105,7 +2984,8 @@ func TestGenerateDefaultSplitsConfig(t *testing.T) {
 		},
 	}
 
-	result := generateDefaultSplitsConfig(route, upstreamNamer, crUpstreams, variableNamer, index, &cfgParams, route.ErrorPages, 0, "")
+	result := generateDefaultSplitsConfig(route, upstreamNamer, crUpstreams, variableNamer, index, &cfgParams,
+		route.ErrorPages, 0, "", locSnippet, enableSnippets, 0)
 	if !reflect.DeepEqual(result, expected) {
 		t.Errorf("generateDefaultSplitsConfig() returned \n%+v but expected \n%+v", result, expected)
 	}
@@ -2467,13 +3347,15 @@ func TestGenerateMatchesConfig(t *testing.T) {
 	}
 
 	cfgParams := ConfigParams{}
+	enableSnippets := false
+	locSnippets := ""
 	crUpstreams := map[string]conf_v1.Upstream{
 		"vs_default_cafe_coffee-v1": {Service: "coffee-v1"},
 		"vs_default_cafe_coffee-v2": {Service: "coffee-v2"},
 		"vs_default_cafe_tea":       {Service: "tea"},
 	}
 
-	result := generateMatchesConfig(route, upstreamNamer, crUpstreams, variableNamer, index, scIndex, &cfgParams, errorPages, 2)
+	result := generateMatchesConfig(route, upstreamNamer, crUpstreams, variableNamer, index, scIndex, &cfgParams, errorPages, 2, locSnippets, enableSnippets, 0)
 	if !reflect.DeepEqual(result, expected) {
 		t.Errorf("generateMatchesConfig() returned \n%+v but expected \n%+v", result, expected)
 	}
@@ -2823,11 +3705,13 @@ func TestGenerateMatchesConfigWithMultipleSplits(t *testing.T) {
 	}
 
 	cfgParams := ConfigParams{}
+	enableSnippets := false
+	locSnippets := ""
 	crUpstreams := map[string]conf_v1.Upstream{
 		"vs_default_cafe_coffee-v1": {Service: "coffee-v1"},
 		"vs_default_cafe_coffee-v2": {Service: "coffee-v2"},
 	}
-	result := generateMatchesConfig(route, upstreamNamer, crUpstreams, variableNamer, index, scIndex, &cfgParams, errorPages, 0)
+	result := generateMatchesConfig(route, upstreamNamer, crUpstreams, variableNamer, index, scIndex, &cfgParams, errorPages, 0, locSnippets, enableSnippets, 0)
 	if !reflect.DeepEqual(result, expected) {
 		t.Errorf("generateMatchesConfig() returned \n%+v but expected \n%+v", result, expected)
 	}

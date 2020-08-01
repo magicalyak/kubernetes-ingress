@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"os"
@@ -23,10 +24,14 @@ import (
 	"github.com/nginxinc/kubernetes-ingress/internal/configs/version1"
 	"github.com/nginxinc/kubernetes-ingress/internal/nginx"
 	conf_v1 "github.com/nginxinc/kubernetes-ingress/pkg/apis/configuration/v1"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 const pemFileNameForMissingTLSSecret = "/etc/nginx/secrets/default"
 const pemFileNameForWildcardTLSSecret = "/etc/nginx/secrets/wildcard"
+const appProtectPolicyFolder = "/etc/nginx/waf/nac-policies/"
+const appProtectLogConfFolder = "/etc/nginx/waf/nac-logconfs/"
 
 // DefaultServerSecretName is the filename of the Secret with a TLS cert and a key for the default server.
 const DefaultServerSecretName = "default"
@@ -106,11 +111,13 @@ func (cnf *Configurator) AddOrUpdateIngress(ingEx *IngressEx) error {
 }
 
 func (cnf *Configurator) addOrUpdateIngress(ingEx *IngressEx) error {
+	apResources := cnf.updateApResources(ingEx)
 	pems := cnf.updateTLSSecrets(ingEx)
 	jwtKeyFileName := cnf.updateJWKSecret(ingEx)
 
 	isMinion := false
-	nginxCfg := generateNginxCfg(ingEx, pems, isMinion, cnf.cfgParams, cnf.isPlus, cnf.IsResolverConfigured(), jwtKeyFileName, cnf.staticCfgParams)
+	nginxCfg := generateNginxCfg(ingEx, pems, apResources, isMinion, cnf.cfgParams, cnf.isPlus, cnf.IsResolverConfigured(), jwtKeyFileName, cnf.staticCfgParams)
+
 	name := objectMetaToFileName(&ingEx.Ingress.ObjectMeta)
 	content, err := cnf.templateExecutor.ExecuteIngressConfigTemplate(&nginxCfg)
 	if err != nil {
@@ -137,6 +144,7 @@ func (cnf *Configurator) AddOrUpdateMergeableIngress(mergeableIngs *MergeableIng
 }
 
 func (cnf *Configurator) addOrUpdateMergeableIngress(mergeableIngs *MergeableIngresses) error {
+	masterApResources := cnf.updateApResources(mergeableIngs.Master)
 	masterPems := cnf.updateTLSSecrets(mergeableIngs.Master)
 	masterJwtKeyFileName := cnf.updateJWKSecret(mergeableIngs.Master)
 	minionJwtKeyFileNames := make(map[string]string)
@@ -145,8 +153,7 @@ func (cnf *Configurator) addOrUpdateMergeableIngress(mergeableIngs *MergeableIng
 		minionJwtKeyFileNames[minionName] = cnf.updateJWKSecret(minion)
 	}
 
-	nginxCfg := generateNginxCfgForMergeableIngresses(mergeableIngs, masterPems, masterJwtKeyFileName, minionJwtKeyFileNames,
-		cnf.cfgParams, cnf.isPlus, cnf.IsResolverConfigured(), cnf.staticCfgParams)
+	nginxCfg := generateNginxCfgForMergeableIngresses(mergeableIngs, masterPems, masterApResources, masterJwtKeyFileName, minionJwtKeyFileNames, cnf.cfgParams, cnf.isPlus, cnf.IsResolverConfigured(), cnf.staticCfgParams)
 
 	name := objectMetaToFileName(&mergeableIngs.Master.Ingress.ObjectMeta)
 	content, err := cnf.templateExecutor.ExecuteIngressConfigTemplate(&nginxCfg)
@@ -202,6 +209,25 @@ func (cnf *Configurator) addOrUpdateVirtualServer(virtualServerEx *VirtualServer
 	cnf.virtualServers[name] = virtualServerEx
 
 	return warnings, nil
+}
+
+// AddOrUpdateVirtualServers adds or updates NGINX configuration for multiple VirtualServer resources.
+func (cnf *Configurator) AddOrUpdateVirtualServers(virtualServerExes []*VirtualServerEx) (Warnings, error) {
+	allWarnings := newWarnings()
+
+	for _, vsEx := range virtualServerExes {
+		warnings, err := cnf.addOrUpdateVirtualServer(vsEx)
+		if err != nil {
+			return allWarnings, err
+		}
+		allWarnings.Add(warnings)
+	}
+
+	if err := cnf.nginxManager.Reload(); err != nil {
+		return allWarnings, fmt.Errorf("Error when reloading NGINX when updating Policy: %v", err)
+	}
+
+	return allWarnings, nil
 }
 
 // AddOrUpdateTransportServer adds or updates NGINX configuration for the TransportServer resource.
@@ -667,7 +693,7 @@ func (cnf *Configurator) updatePlusEndpointsForTransportServer(transportServerEx
 }
 
 func (cnf *Configurator) updatePlusEndpoints(ingEx *IngressEx) error {
-	ingCfg := parseAnnotations(ingEx, cnf.cfgParams, cnf.isPlus)
+	ingCfg := parseAnnotations(ingEx, cnf.cfgParams, cnf.isPlus, cnf.staticCfgParams.MainAppProtectLoadModule, cnf.staticCfgParams.EnableInternalRoutes)
 
 	cfg := nginx.ServerConfig{
 		MaxFails:    ingCfg.MaxFails,
@@ -740,6 +766,13 @@ func (cnf *Configurator) UpdateConfig(cfgParams *ConfigParams, ingExes []*Ingres
 		err := cnf.templateExecutor.UpdateIngressTemplate(cfgParams.IngressTemplate)
 		if err != nil {
 			return allWarnings, fmt.Errorf("Error when parsing the ingress template: %v", err)
+		}
+	}
+
+	if cfgParams.VirtualServerTemplate != nil {
+		err := cnf.templateExecutorV2.UpdateVirtualServerTemplate(cfgParams.VirtualServerTemplate)
+		if err != nil {
+			return allWarnings, fmt.Errorf("Error when parsing the VirtualServer template: %v", err)
 		}
 	}
 
@@ -948,4 +981,133 @@ func createSpiffeCert(certs []*x509.Certificate) []byte {
 		pemData = append(pemData, pem.EncodeToMemory(b)...)
 	}
 	return pemData
+}
+
+func (cnf *Configurator) updateApResources(ingEx *IngressEx) map[string]string {
+	apRes := make(map[string]string)
+	if ingEx.AppProtectPolicy != nil {
+		policyFileName := appProtectPolicyFileNameFromIngEx(ingEx)
+		policyContent := generateApResourceFileContent(ingEx.AppProtectPolicy)
+		cnf.nginxManager.CreateAppProtectResourceFile(policyFileName, policyContent)
+		apRes[appProtectPolicyKey] = policyFileName
+
+	}
+
+	if ingEx.AppProtectLogConf != nil {
+		logConfFileName := appProtectLogConfFileNameFromIngEx(ingEx)
+		logConfContent := generateApResourceFileContent(ingEx.AppProtectLogConf)
+		cnf.nginxManager.CreateAppProtectResourceFile(logConfFileName, logConfContent)
+		apRes[appProtectLogConfKey] = logConfFileName + " " + ingEx.AppProtectLogDst
+	}
+
+	return apRes
+}
+
+func appProtectPolicyFileNameFromIngEx(ingEx *IngressEx) string {
+	return fmt.Sprintf("%s%s_%s", appProtectPolicyFolder, ingEx.AppProtectPolicy.GetNamespace(), ingEx.AppProtectPolicy.GetName())
+}
+
+func appProtectLogConfFileNameFromIngEx(ingEx *IngressEx) string {
+	return fmt.Sprintf("%s%s_%s", appProtectLogConfFolder, ingEx.AppProtectLogConf.GetNamespace(), ingEx.AppProtectLogConf.GetName())
+}
+
+func generateApResourceFileContent(apResource *unstructured.Unstructured) []byte {
+	// Safe to ignore errors since validation already checked those
+	spec, _, _ := unstructured.NestedMap(apResource.Object, "spec")
+	data, _ := json.Marshal(spec)
+	return data
+}
+
+// AddOrUpdateAppProtectResource updates Ingresses that use App Protect Resources
+func (cnf *Configurator) AddOrUpdateAppProtectResource(resource *unstructured.Unstructured, ingExes []IngressEx, mergeableIngresses []MergeableIngresses) error {
+	for i := range ingExes {
+		err := cnf.addOrUpdateIngress(&ingExes[i])
+		if err != nil {
+			return fmt.Errorf("Error adding or updating ingress %v/%v: %v", ingExes[i].Ingress.Namespace, ingExes[i].Ingress.Name, err)
+		}
+	}
+
+	for i := range mergeableIngresses {
+		err := cnf.addOrUpdateMergeableIngress(&mergeableIngresses[i])
+		if err != nil {
+			return fmt.Errorf("Error adding or updating mergeableIngress %v/%v: %v", mergeableIngresses[i].Master.Ingress.Namespace, mergeableIngresses[i].Master.Ingress.Name, err)
+		}
+	}
+
+	if err := cnf.nginxManager.Reload(); err != nil {
+		return fmt.Errorf("Error when reloading NGINX when updating %v: %v", resource.GetKind(), err)
+	}
+
+	return nil
+}
+
+// DeleteAppProtectPolicy updates Ingresses that use AP Policy after that policy is deleted
+func (cnf *Configurator) DeleteAppProtectPolicy(polNamespaceame string, ingExes []IngressEx, mergeableIngresses []MergeableIngresses) error {
+	fName := strings.Replace(polNamespaceame, "/", "_", 1)
+	polFileName := appProtectPolicyFolder + fName
+	cnf.nginxManager.DeleteAppProtectResourceFile(polFileName)
+
+	for i := range ingExes {
+		err := cnf.addOrUpdateIngress(&ingExes[i])
+		if err != nil {
+			return fmt.Errorf("Error adding or updating ingress %v/%v: %v", ingExes[i].Ingress.Namespace, ingExes[i].Ingress.Name, err)
+		}
+	}
+
+	for i := range mergeableIngresses {
+		err := cnf.addOrUpdateMergeableIngress(&mergeableIngresses[i])
+		if err != nil {
+			return fmt.Errorf("Error adding or updating mergeableIngress %v/%v: %v", mergeableIngresses[i].Master.Ingress.Namespace, mergeableIngresses[i].Master.Ingress.Name, err)
+		}
+	}
+
+	if err := cnf.nginxManager.Reload(); err != nil {
+		return fmt.Errorf("Error when reloading NGINX when removing App Protect Policy: %v", err)
+	}
+
+	return nil
+}
+
+// DeleteAppProtectLogConf updates Ingresses that use AP Log Configuration after that policy is deleted
+func (cnf *Configurator) DeleteAppProtectLogConf(logConfNamespaceame string, ingExes []IngressEx, mergeableIngresses []MergeableIngresses) error {
+	fName := strings.Replace(logConfNamespaceame, "/", "_", 1)
+	logConfFileName := appProtectLogConfFolder + fName
+	cnf.nginxManager.DeleteAppProtectResourceFile(logConfFileName)
+
+	for i := range ingExes {
+		err := cnf.addOrUpdateIngress(&ingExes[i])
+		if err != nil {
+			return fmt.Errorf("Error adding or updating ingress %v/%v: %v", ingExes[i].Ingress.Namespace, ingExes[i].Ingress.Name, err)
+		}
+	}
+
+	for i := range mergeableIngresses {
+		err := cnf.addOrUpdateMergeableIngress(&mergeableIngresses[i])
+		if err != nil {
+			return fmt.Errorf("Error adding or updating mergeableIngress %v/%v: %v", mergeableIngresses[i].Master.Ingress.Namespace, mergeableIngresses[i].Master.Ingress.Name, err)
+		}
+	}
+
+	if err := cnf.nginxManager.Reload(); err != nil {
+		return fmt.Errorf("Error when reloading NGINX when removing App Protect Log Configuration: %v", err)
+	}
+
+	return nil
+}
+
+// AddInternalRouteConfig adds internal route server to NGINX Configuration and
+// reloads NGINX
+func (cnf *Configurator) AddInternalRouteConfig() error {
+	cnf.staticCfgParams.EnableInternalRoutes = true
+	cnf.staticCfgParams.PodName = os.Getenv("POD_NAME")
+	mainCfg := GenerateNginxMainConfig(cnf.staticCfgParams, cnf.cfgParams)
+	mainCfgContent, err := cnf.templateExecutor.ExecuteMainConfigTemplate(mainCfg)
+	if err != nil {
+		return fmt.Errorf("Error when writing main Config: %v", err)
+	}
+	cnf.nginxManager.CreateMainConfig(mainCfgContent)
+	if err := cnf.nginxManager.Reload(); err != nil {
+		return fmt.Errorf("Error when reloading nginx: %v", err)
+	}
+	return nil
 }

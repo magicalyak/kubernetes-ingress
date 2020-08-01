@@ -5,66 +5,74 @@ import conf_v1alpha1 "github.com/nginxinc/kubernetes-ingress/pkg/apis/configurat
 // ConfigParams holds NGINX configuration parameters that affect the main NGINX config
 // as well as configs for Ingress resources.
 type ConfigParams struct {
-	ClientMaxBodySize             string
-	DefaultServerAccessLogOff     bool
-	FailTimeout                   string
-	HealthCheckEnabled            bool
-	HealthCheckMandatory          bool
-	HealthCheckMandatoryQueue     int64
-	HSTS                          bool
-	HSTSBehindProxy               bool
-	HSTSIncludeSubdomains         bool
-	HSTSMaxAge                    int64
-	HTTP2                         bool
-	Keepalive                     int
-	LBMethod                      string
-	LocationSnippets              []string
-	MainAccessLogOff              bool
-	MainErrorLogLevel             string
-	MainHTTPSnippets              []string
-	MainKeepaliveRequests         int64
-	MainKeepaliveTimeout          string
-	MainLogFormat                 []string
-	MainLogFormatEscaping         string
-	MainMainSnippets              []string
-	MainOpenTracingEnabled        bool
-	MainOpenTracingLoadModule     bool
-	MainOpenTracingTracer         string
-	MainOpenTracingTracerConfig   string
-	MainServerNamesHashBucketSize string
-	MainServerNamesHashMaxSize    string
-	MainStreamLogFormat           []string
-	MainStreamLogFormatEscaping   string
-	MainStreamSnippets            []string
-	MainWorkerConnections         string
-	MainWorkerCPUAffinity         string
-	MainWorkerProcesses           string
-	MainWorkerRlimitNofile        string
-	MainWorkerShutdownTimeout     string
-	MaxConns                      int
-	MaxFails                      int
-	ProxyBuffering                bool
-	ProxyBuffers                  string
-	ProxyBufferSize               string
-	ProxyConnectTimeout           string
-	ProxyHideHeaders              []string
-	ProxyMaxTempFileSize          string
-	ProxyPassHeaders              []string
-	ProxyProtocol                 bool
-	ProxyReadTimeout              string
-	ProxySendTimeout              string
-	RedirectToHTTPS               bool
-	ResolverAddresses             []string
-	ResolverIPV6                  bool
-	ResolverTimeout               string
-	ResolverValid                 string
-	ServerSnippets                []string
-	ServerTokens                  string
-	SlowStart                     string
-	SSLRedirect                   bool
-	UpstreamZoneSize              string
-	VariablesHashBucketSize       uint64
-	VariablesHashMaxSize          uint64
+	ClientMaxBodySize                      string
+	DefaultServerAccessLogOff              bool
+	FailTimeout                            string
+	HealthCheckEnabled                     bool
+	HealthCheckMandatory                   bool
+	HealthCheckMandatoryQueue              int64
+	HSTS                                   bool
+	HSTSBehindProxy                        bool
+	HSTSIncludeSubdomains                  bool
+	HSTSMaxAge                             int64
+	HTTP2                                  bool
+	Keepalive                              int
+	LBMethod                               string
+	LocationSnippets                       []string
+	MainAccessLogOff                       bool
+	MainErrorLogLevel                      string
+	MainHTTPSnippets                       []string
+	MainKeepaliveRequests                  int64
+	MainKeepaliveTimeout                   string
+	MainLogFormat                          []string
+	MainLogFormatEscaping                  string
+	MainMainSnippets                       []string
+	MainOpenTracingEnabled                 bool
+	MainOpenTracingLoadModule              bool
+	MainOpenTracingTracer                  string
+	MainOpenTracingTracerConfig            string
+	MainServerNamesHashBucketSize          string
+	MainServerNamesHashMaxSize             string
+	MainStreamLogFormat                    []string
+	MainStreamLogFormatEscaping            string
+	MainStreamSnippets                     []string
+	MainWorkerConnections                  string
+	MainWorkerCPUAffinity                  string
+	MainWorkerProcesses                    string
+	MainWorkerRlimitNofile                 string
+	MainWorkerShutdownTimeout              string
+	MaxConns                               int
+	MaxFails                               int
+	AppProtectEnable                       string
+	AppProtectPolicy                       string
+	AppProtectLogConf                      string
+	AppProtectLogEnable                    string
+	MainAppProtectFailureModeAction        string
+	MainAppProtectCookieSeed               string
+	MainAppProtectCPUThresholds            string
+	MainAppProtectPhysicalMemoryThresholds string
+	ProxyBuffering                         bool
+	ProxyBuffers                           string
+	ProxyBufferSize                        string
+	ProxyConnectTimeout                    string
+	ProxyHideHeaders                       []string
+	ProxyMaxTempFileSize                   string
+	ProxyPassHeaders                       []string
+	ProxyProtocol                          bool
+	ProxyReadTimeout                       string
+	ProxySendTimeout                       string
+	RedirectToHTTPS                        bool
+	ResolverAddresses                      []string
+	ResolverIPV6                           bool
+	ResolverTimeout                        string
+	ResolverValid                          string
+	ServerSnippets                         []string
+	ServerTokens                           string
+	SlowStart                              string
+	SSLRedirect                            bool
+	UpstreamZoneSize                       string
+	VariablesHashBucketSize                uint64
+	VariablesHashMaxSize                   uint64
 
 	RealIPHeader    string
 	RealIPRecursive bool
@@ -76,8 +84,9 @@ type ConfigParams struct {
 	MainServerSSLPreferServerCiphers bool
 	MainServerSSLProtocols           string
 
-	IngressTemplate *string
-	MainTemplate    *string
+	IngressTemplate       *string
+	VirtualServerTemplate *string
+	MainTemplate          *string
 
 	JWTKey      string
 	JWTLoginURL string
@@ -87,7 +96,7 @@ type ConfigParams struct {
 	Ports    []int
 	SSLPorts []int
 
-	SpiffeCerts bool
+	SpiffeServerCerts bool
 }
 
 // StaticConfigParams holds immutable NGINX configuration parameters that affect the main NGINX config.
@@ -99,7 +108,11 @@ type StaticConfigParams struct {
 	NginxStatusPort                int
 	StubStatusOverUnixSocketForOSS bool
 	TLSPassthrough                 bool
+	EnableSnippets                 bool
 	SpiffeCerts                    bool
+	EnableInternalRoutes           bool
+	MainAppProtectLoadModule       bool
+	PodName                        string
 }
 
 // GlobalConfigParams holds global configuration parameters. For now, it only holds listeners.

@@ -59,8 +59,21 @@ spec:
           properties:
             host:
               type: string
+            http-snippets:
+              type: string
             ingressClassName:
               type: string
+            policies:
+              type: array
+              items:
+                description: PolicyReference references a policy by name and an optional
+                  namespace.
+                type: object
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
             routes:
               type: array
               items:
@@ -186,6 +199,8 @@ spec:
                                     type: string
                             type:
                               type: string
+                  location-snippets:
+                    type: string
                   matches:
                     type: array
                     items:
@@ -383,6 +398,17 @@ spec:
                                 type: integer
                   path:
                     type: string
+                  policies:
+                    type: array
+                    items:
+                      description: PolicyReference references a policy by name and
+                        an optional namespace.
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        namespace:
+                          type: string
                   route:
                     type: string
                   splits:
@@ -474,6 +500,8 @@ spec:
                                   type: string
                         weight:
                           type: integer
+            server-snippets:
+              type: string
             tls:
               description: TLS defines TLS configuration for a VirtualServer.
               type: object

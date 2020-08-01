@@ -90,6 +90,116 @@ func TestValidateHost(t *testing.T) {
 	}
 }
 
+func TestValidatePolicies(t *testing.T) {
+	tests := []struct {
+		policies []v1.PolicyReference
+		msg      string
+	}{
+		{
+			policies: []v1.PolicyReference{
+				{
+					Name: "my-policy",
+				},
+			},
+			msg: "name without namespace",
+		},
+		{
+			policies: []v1.PolicyReference{
+				{
+					Name:      "my-policy",
+					Namespace: "nginx-ingress",
+				},
+			},
+			msg: "name with namespace",
+		},
+		{
+			policies: []v1.PolicyReference{
+				{
+					Name:      "my-policy",
+					Namespace: "default",
+				},
+				{
+					Name:      "my-policy",
+					Namespace: "test",
+				},
+			},
+			msg: "same name different namespaces",
+		},
+	}
+
+	for _, test := range tests {
+		allErrs := validatePolicies(test.policies, field.NewPath("policies"), "default")
+		if len(allErrs) > 0 {
+			t.Errorf("validatePolicies() returned errors %v for valid input for the case of %s", allErrs, test.msg)
+		}
+	}
+}
+
+func TestValidatePoliciesFails(t *testing.T) {
+	tests := []struct {
+		policies []v1.PolicyReference
+		msg      string
+	}{
+		{
+			policies: []v1.PolicyReference{
+				{
+					Name: "",
+				},
+			},
+			msg: "missing name",
+		},
+		{
+			policies: []v1.PolicyReference{
+				{
+					Name: "-invalid",
+				},
+			},
+			msg: "invalid name",
+		},
+		{
+			policies: []v1.PolicyReference{
+				{
+					Name:      "my-policy",
+					Namespace: "-invalid",
+				},
+			},
+			msg: "invalid namespace",
+		},
+		{
+			policies: []v1.PolicyReference{
+				{
+					Name:      "my-policy",
+					Namespace: "default",
+				},
+				{
+					Name:      "my-policy",
+					Namespace: "default",
+				},
+			},
+			msg: "duplicated policies",
+		},
+		{
+			policies: []v1.PolicyReference{
+				{
+					Name:      "my-policy",
+					Namespace: "default",
+				},
+				{
+					Name: "my-policy",
+				},
+			},
+			msg: "duplicated policies with inferred namespace",
+		},
+	}
+
+	for _, test := range tests {
+		allErrs := validatePolicies(test.policies, field.NewPath("policies"), "default")
+		if len(allErrs) == 0 {
+			t.Errorf("validatePolicies() returned no errors for invalid input for the case of %s", test.msg)
+		}
+	}
+}
+
 func TestValidateTLS(t *testing.T) {
 	validTLSes := []*v1.TLS{
 		nil,
@@ -535,7 +645,7 @@ func TestValidateVirtualServerRoutes(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		allErrs := validateVirtualServerRoutes(test.routes, field.NewPath("routes"), test.upstreamNames)
+		allErrs := validateVirtualServerRoutes(test.routes, field.NewPath("routes"), test.upstreamNames, "default")
 		if len(allErrs) > 0 {
 			t.Errorf("validateVirtualServerRoutes() returned errors %v for valid input for the case of %s", allErrs, test.msg)
 		}
@@ -583,7 +693,7 @@ func TestValidateVirtualServerRoutesFails(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		allErrs := validateVirtualServerRoutes(test.routes, field.NewPath("routes"), test.upstreamNames)
+		allErrs := validateVirtualServerRoutes(test.routes, field.NewPath("routes"), test.upstreamNames, "default")
 		if len(allErrs) == 0 {
 			t.Errorf("validateVirtualServerRoutes() returned no errors for the case of %s", test.msg)
 		}
@@ -676,7 +786,7 @@ func TestValidateRoute(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		allErrs := validateRoute(test.route, field.NewPath("route"), test.upstreamNames, test.isRouteFieldForbidden)
+		allErrs := validateRoute(test.route, field.NewPath("route"), test.upstreamNames, test.isRouteFieldForbidden, "default")
 		if len(allErrs) > 0 {
 			t.Errorf("validateRoute() returned errors %v for valid input for the case of %s", allErrs, test.msg)
 		}
@@ -807,7 +917,7 @@ func TestValidateRouteFails(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		allErrs := validateRoute(test.route, field.NewPath("route"), test.upstreamNames, test.isRouteFieldForbidden)
+		allErrs := validateRoute(test.route, field.NewPath("route"), test.upstreamNames, test.isRouteFieldForbidden, "default")
 		if len(allErrs) == 0 {
 			t.Errorf("validateRoute() returned no errors for invalid input for the case of %s", test.msg)
 		}
@@ -1907,7 +2017,8 @@ func TestValidateVirtualServerRouteSubroutes(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		allErrs := validateVirtualServerRouteSubroutes(test.routes, field.NewPath("subroutes"), test.upstreamNames, test.pathPrefix)
+		allErrs := validateVirtualServerRouteSubroutes(test.routes, field.NewPath("subroutes"), test.upstreamNames,
+			test.pathPrefix, "default")
 		if len(allErrs) > 0 {
 			t.Errorf("validateVirtualServerRouteSubroutes() returned errors %v for valid input for the case of %s", allErrs, test.msg)
 		}
@@ -1972,7 +2083,8 @@ func TestValidateVirtualServerRouteSubroutesFails(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		allErrs := validateVirtualServerRouteSubroutes(test.routes, field.NewPath("subroutes"), test.upstreamNames, test.pathPrefix)
+		allErrs := validateVirtualServerRouteSubroutes(test.routes, field.NewPath("subroutes"), test.upstreamNames,
+			test.pathPrefix, "default")
 		if len(allErrs) == 0 {
 			t.Errorf("validateVirtualServerRouteSubroutes() returned no errors for the case of %s", test.msg)
 		}

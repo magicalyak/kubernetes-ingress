@@ -29,6 +29,7 @@ import (
 	api_v1 "k8s.io/api/core/v1"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -37,6 +38,7 @@ import (
 )
 
 var (
+
 	// Set during build
 	version   string
 	gitCommit string
@@ -61,6 +63,8 @@ var (
 	Format: <namespace>/<name>`)
 
 	nginxPlus = flag.Bool("nginx-plus", false, "Enable support for NGINX Plus")
+
+	appProtect = flag.Bool("enable-app-protect", false, "Enable support for NGINX App Protect. Requires -nginx-plus.")
 
 	ingressClass = flag.String("ingress-class", "nginx",
 		`A class of the Ingress controller. The Ingress controller only processes Ingress resources that belong to its class
@@ -110,13 +114,17 @@ var (
 	nginxStatusAllowCIDRs = flag.String("nginx-status-allow-cidrs", "127.0.0.1", `Whitelist IPv4 IP/CIDR blocks to allow access to NGINX stub_status or the NGINX Plus API. Separate multiple IP/CIDR by commas.`)
 
 	nginxStatusPort = flag.Int("nginx-status-port", 8080,
-		"Set the port where the NGINX stub_status or the NGINX Plus API is exposed. [1023 - 65535]")
+		"Set the port where the NGINX stub_status or the NGINX Plus API is exposed. [1024 - 65535]")
 
 	nginxStatus = flag.Bool("nginx-status", true,
 		"Enable the NGINX stub_status, or the NGINX Plus API.")
 
 	nginxDebug = flag.Bool("nginx-debug", false,
 		"Enable debugging for NGINX. Uses the nginx-debug binary. Requires 'error-log-level: debug' in the ConfigMap.")
+
+	nginxReloadTimeout = flag.Int("nginx-reload-timeout", 0,
+		`The timeout in milliseconds which the Ingress Controller will wait for a successful NGINX reload after a change or at the initial start.
+		The default is 4000 (or 20000 if -enable-app-protect is true). If set to 0, the default value will be used`)
 
 	wildcardTLSSecret = flag.String("wildcard-tls-secret", "",
 		`A Secret with a TLS certificate and key for TLS termination of every Ingress host for which TLS termination is enabled but the Secret is not specified.
@@ -127,10 +135,13 @@ var (
 		"Enable exposing NGINX or NGINX Plus metrics in the Prometheus format")
 
 	prometheusMetricsListenPort = flag.Int("prometheus-metrics-listen-port", 9113,
-		"Set the port where the Prometheus metrics are exposed. [1023 - 65535]")
+		"Set the port where the Prometheus metrics are exposed. [1024 - 65535]")
 
 	enableCustomResources = flag.Bool("enable-custom-resources", true,
 		"Enable custom resources")
+
+	enableSnippets = flag.Bool("enable-snippets", false,
+		"Enable custom NGINX configuration snippets in VirtualServer and VirtualServerRoute resources.")
 
 	globalConfiguration = flag.String("global-configuration", "",
 		`A GlobalConfiguration resource for global configuration of the Ingress Controller. Requires -enable-custom-resources. If the flag is set,
@@ -141,8 +152,15 @@ var (
 		"Enable TLS Passthrough on port 443. Requires -enable-custom-resources")
 
 	spireAgentAddress = flag.String("spire-agent-address", "",
-		`Specifies the address of the running Spire agent. For use with NGINX Service Mesh only. If the flag is set,
+		`Specifies the address of the running Spire agent. Requires -nginx-plus and is for use with NGINX Service Mesh only. If the flag is set,
 			but the Ingress Controller is not able to connect with the Spire Agent, the Ingress Controller will fail to start.`)
+
+	enableInternalRoutes = flag.Bool("enable-internal-routes", false,
+		`Enable support for internal routes with NGINX Service Mesh. Requires -spire-agent-address and -nginx-plus. Is for use with NGINX Service Mesh only.`)
+
+	readyStatus = flag.Bool("ready-status", true, "Enables the readiness endpoint '/nginx-ready'. The endpoint returns a success code when NGINX has loaded all the config after the startup")
+
+	readyStatusPort = flag.Int("ready-status-port", 8081, "Set the port where the readiness endpoint is exposed. [1024 - 65535]")
 )
 
 func main() {
@@ -178,6 +196,11 @@ func main() {
 		glog.Fatalf("Invalid value for prometheus-metrics-listen-port: %v", metricsPortValidationError)
 	}
 
+	readyStatusPortValidationError := validatePort(*readyStatusPort)
+	if readyStatusPortValidationError != nil {
+		glog.Fatalf("Invalid value for ready-status-port: %v", readyStatusPortValidationError)
+	}
+
 	allowedCIDRs, err := parseNginxStatusAllowCIDRs(*nginxStatusAllowCIDRs)
 	if err != nil {
 		glog.Fatalf(`Invalid value for nginx-status-allow-cidrs: %v`, err)
@@ -185,6 +208,18 @@ func main() {
 
 	if *enableTLSPassthrough && !*enableCustomResources {
 		glog.Fatalf("enable-tls-passthrough flag requires -enable-custom-resources")
+	}
+
+	if *appProtect && !*nginxPlus {
+		glog.Fatal("NGINX App Protect support is for NGINX Plus only")
+	}
+
+	if *spireAgentAddress != "" && !*nginxPlus {
+		glog.Fatal("spire-agent-address support is for NGINX Plus only")
+	}
+
+	if *enableInternalRoutes && *spireAgentAddress == "" {
+		glog.Fatal("enable-internal-routes flag requires spire-agent-address")
 	}
 
 	glog.Infof("Starting NGINX Ingress controller Version=%v GitCommit=%v\n", version, gitCommit)
@@ -212,6 +247,13 @@ func main() {
 		glog.Fatalf("Failed to create client: %v.", err)
 	}
 
+	var dynClient dynamic.Interface
+	if *appProtect {
+		dynClient, err = dynamic.NewForConfig(config)
+		if err != nil {
+			glog.Fatalf("Failed to create dynamic client: %v.", err)
+		}
+	}
 	var confClient k8s_nginx.Interface
 	if *enableCustomResources {
 		confClient, err = k8s_nginx.NewForConfig(config)
@@ -276,6 +318,7 @@ func main() {
 		registry = prometheus.NewRegistry()
 		managerCollector = collectors.NewLocalManagerMetricsCollector(constLabels)
 		controllerCollector = collectors.NewControllerMetricsCollector(*enableCustomResources, constLabels)
+		processCollector := collectors.NewNginxProcessesMetricsCollector(constLabels)
 
 		err = managerCollector.Register(registry)
 		if err != nil {
@@ -286,6 +329,11 @@ func main() {
 		if err != nil {
 			glog.Errorf("Error registering Controller Prometheus metrics: %v", err)
 		}
+
+		err = processCollector.Register(registry)
+		if err != nil {
+			glog.Errorf("Error registering NginxProcess Prometheus metrics: %v", err)
+		}
 	}
 
 	useFakeNginxManager := *proxyURL != ""
@@ -293,7 +341,18 @@ func main() {
 	if useFakeNginxManager {
 		nginxManager = nginx.NewFakeManager("/etc/nginx")
 	} else {
-		nginxManager = nginx.NewLocalManager("/etc/nginx/", nginxBinaryPath, managerCollector)
+		nginxManager = nginx.NewLocalManager("/etc/nginx/", nginxBinaryPath, managerCollector, parseReloadTimeout(*appProtect, *nginxReloadTimeout))
+	}
+
+	var aPPluginDone chan error
+	var aPAgentDone chan error
+
+	if *appProtect {
+		aPPluginDone = make(chan error, 1)
+		aPAgentDone = make(chan error, 1)
+
+		nginxManager.AppProtectAgentStart(aPAgentDone, *nginxDebug)
+		nginxManager.AppProtectPluginStart(aPPluginDone)
 	}
 
 	if *defaultServerSecret != "" {
@@ -352,6 +411,7 @@ func main() {
 	}
 
 	cfgParams := configs.NewDefaultConfigParams()
+
 	if *nginxConfigMaps != "" {
 		ns, name, err := k8s.ParseNamespaceName(*nginxConfigMaps)
 		if err != nil {
@@ -361,7 +421,7 @@ func main() {
 		if err != nil {
 			glog.Fatalf("Error when getting %v: %v", *nginxConfigMaps, err)
 		}
-		cfgParams = configs.ParseConfigMap(cfm, *nginxPlus)
+		cfgParams = configs.ParseConfigMap(cfm, *nginxPlus, *appProtect)
 		if cfgParams.MainServerSSLDHParamFileContent != nil {
 			fileName, err := nginxManager.CreateDHParam(*cfgParams.MainServerSSLDHParamFileContent)
 			if err != nil {
@@ -383,7 +443,6 @@ func main() {
 			}
 		}
 	}
-
 	staticCfgParams := &configs.StaticConfigParams{
 		HealthStatus:                   *healthStatus,
 		HealthStatusURI:                *healthStatusURI,
@@ -392,7 +451,9 @@ func main() {
 		NginxStatusPort:                *nginxStatusPort,
 		StubStatusOverUnixSocketForOSS: *enablePrometheusMetrics,
 		TLSPassthrough:                 *enableTLSPassthrough,
+		EnableSnippets:                 *enableSnippets,
 		SpiffeCerts:                    *spireAgentAddress != "",
+		MainAppProtectLoadModule:       *appProtect,
 	}
 
 	ngxConfig := configs.GenerateNginxMainConfig(staticCfgParams, cfgParams)
@@ -453,10 +514,12 @@ func main() {
 	lbcInput := k8s.NewLoadBalancerControllerInput{
 		KubeClient:                   kubeClient,
 		ConfClient:                   confClient,
+		DynClient:                    dynClient,
 		ResyncPeriod:                 30 * time.Second,
 		Namespace:                    *watchNamespace,
 		NginxConfigurator:            cnf,
 		DefaultServerSecret:          *defaultServerSecret,
+		AppProtectEnabled:            *appProtect,
 		IsNginxPlus:                  *nginxPlus,
 		IngressClass:                 *ingressClass,
 		UseIngressClassOnly:          *useIngressClassOnly,
@@ -473,11 +536,26 @@ func main() {
 		GlobalConfigurationValidator: globalConfigurationValidator,
 		TransportServerValidator:     transportServerValidator,
 		SpireAgentAddress:            *spireAgentAddress,
+		InternalRoutesEnabled:        *enableInternalRoutes,
 	}
 
 	lbc := k8s.NewLoadBalancerController(lbcInput)
 
-	go handleTermination(lbc, nginxManager, nginxDone)
+	if *readyStatus {
+		go func() {
+			port := fmt.Sprintf(":%v", *readyStatusPort)
+			s := http.NewServeMux()
+			s.HandleFunc("/nginx-ready", ready(lbc))
+			glog.Fatal(http.ListenAndServe(port, s))
+		}()
+	}
+
+	if *appProtect {
+		go handleTerminationWithAppProtect(lbc, nginxManager, nginxDone, aPAgentDone, aPPluginDone)
+	} else {
+		go handleTermination(lbc, nginxManager, nginxDone)
+	}
+
 	lbc.Run()
 
 	for {
@@ -557,8 +635,8 @@ func validateResourceName(lock string) error {
 
 // validatePort makes sure a given port is inside the valid port range for its usage
 func validatePort(port int) error {
-	if port < 1023 || port > 65535 {
-		return fmt.Errorf("port outside of valid port range [1023 - 65535]: %v", port)
+	if port < 1024 || port > 65535 {
+		return fmt.Errorf("port outside of valid port range [1024 - 65535]: %v", port)
 	}
 	return nil
 }
@@ -626,4 +704,55 @@ func validateLocation(location string) error {
 		return fmt.Errorf("invalid location format: %v", msg)
 	}
 	return nil
+}
+
+func handleTerminationWithAppProtect(lbc *k8s.LoadBalancerController, nginxManager nginx.Manager, nginxDone, agentDone, pluginDone chan error) {
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, syscall.SIGTERM)
+
+	select {
+	case err := <-nginxDone:
+		glog.Fatalf("nginx command exited unexpectedly with status: %v", err)
+	case err := <-pluginDone:
+		glog.Fatalf("AppProtectPlugin command exited unexpectedly with status: %v", err)
+	case err := <-agentDone:
+		glog.Fatalf("AppProtectAgent command exited unexpectedly with status: %v", err)
+	case <-signalChan:
+		glog.Infof("Received SIGTERM, shutting down")
+		lbc.Stop()
+		nginxManager.Quit()
+		<-nginxDone
+		nginxManager.AppProtectPluginQuit()
+		<-pluginDone
+		nginxManager.AppProtectAgentQuit()
+		<-agentDone
+	}
+	glog.Info("Exiting successfully")
+	os.Exit(0)
+}
+
+func parseReloadTimeout(appProtectEnabled bool, timeout int) int {
+	const defaultTimeout = 4000
+	const defaultTimeoutAppProtect = 20000
+
+	if timeout != 0 {
+		return timeout
+	}
+
+	if appProtectEnabled {
+		return defaultTimeoutAppProtect
+	}
+
+	return defaultTimeout
+}
+
+func ready(lbc *k8s.LoadBalancerController) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		if !lbc.IsNginxReady() {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "Ready")
+	}
 }

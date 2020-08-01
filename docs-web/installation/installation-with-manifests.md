@@ -23,6 +23,13 @@ This document describes how to install the NGINX Ingress Controller in your Kube
     ```
     $ kubectl apply -f rbac/rbac.yaml
     ```
+   
+3. (App Protect only) Create the App Protect role and role binding:  
+    
+    ```
+    $ kubectl apply -f rbac/ap-rbac.yaml
+    ```
+    
 **Note**: To perform this step you must be a cluster admin. Follow the documentation of your Kubernetes platform to configure the admin access. For GKE, see the [Role-Based Access Control](https://cloud.google.com/kubernetes-engine/docs/how-to/role-based-access-control) doc.
 
 ## 2. Create Common Resources
@@ -40,11 +47,19 @@ In this section, we create resources common for most of the Ingress Controller i
     $ kubectl apply -f common/nginx-config.yaml
     ```
 
-1. Create custom resource definitions for [VirtualServer and VirtualServerRoute](/nginx-ingress-controller/configuration/virtualserver-and-virtualserverroute-resources) and [TransportServer](/nginx-ingress-controller/configuration/transportserver-resource) resources:
+### Create Custom Resources
+
+**Note**: If you're using Kubernetes 1.14, make sure to add `--validate=false` to the `kubectl apply` commands below. Otherwise, you will get an error validating data:
+```
+ValidationError(CustomResourceDefinition.spec): unknown field "preserveUnknownFields" in io.k8s.apiextensions-apiserver.pkg.apis.api extensions.v1beta1.CustomResourceDefinitionSpec
+```
+
+1. Create custom resource definitions for [VirtualServer and VirtualServerRoute](/nginx-ingress-controller/configuration/virtualserver-and-virtualserverroute-resources), [TransportServer](/nginx-ingress-controller/configuration/transportserver-resource) and [Policy](/nginx-ingress-controller/configuration/policy-resource) resources:
     ```
     $ kubectl apply -f common/vs-definition.yaml
     $ kubectl apply -f common/vsr-definition.yaml
     $ kubectl apply -f common/ts-definition.yaml
+    $ kubectl apply -f common/policy-definition.yaml
     ```
 
 If you would like to use the TCP and UDP load balancing features of the Ingress Controller, create the following additional resources: 
@@ -56,9 +71,22 @@ If you would like to use the TCP and UDP load balancing features of the Ingress 
     ```
     $ kubectl apply -f common/global-configuration.yaml
     ```
-    **Note**: Make sure to references this resource in the [`-global-configuration`](/nginx-ingress-controller/configuration/global-configuration/command-line-arguments#cmdoption-global-configuration) command-line argument.
+    **Note**: Make sure to reference this resource in the [`-global-configuration`](/nginx-ingress-controller/configuration/global-configuration/command-line-arguments#cmdoption-global-configuration) command-line argument.
 
-> **Feature Status**: The TransportServer and GlobalConfiguration resources are available as a preview feature: it is suitable for experimenting and testing; however, it must be used with caution in production environments. Additionally, while the feature is in preview, we might introduce some backward-incompatible changes to the resources specification in the next releases.
+> **Feature Status**: The TransportServer, GlobalConfiguration and Policy resources are available as a preview feature: it is suitable for experimenting and testing; however, it must be used with caution in production environments. Additionally, while the feature is in preview, we might introduce some backward-incompatible changes to the resources specification in the next releases.
+
+### Resources for NGINX App Protect
+
+**Note**: If you're using Kubernetes 1.14, make sure to add `--validate=false` to the `kubectl apply` commands below.
+
+If you would like to use the App Protect module, create the following additional resources:
+
+1. Create a custom resource definition for `APPolicy` and `APLogConf`:
+   
+   ```
+   $ kubectl apply -f common/ap-logconf-definition.yaml 
+   $ kubectl apply -f common/ap-policy-definition.yaml 
+   ```
 
 ## 3. Deploy the Ingress Controller
 

@@ -22,21 +22,22 @@ var escapedStringsFmtRegexp = regexp.MustCompile("^" + escapedStringsFmt + "$")
 
 // ValidateVirtualServer validates a VirtualServer.
 func ValidateVirtualServer(virtualServer *v1.VirtualServer, isPlus bool) error {
-	allErrs := validateVirtualServerSpec(&virtualServer.Spec, field.NewPath("spec"), isPlus)
+	allErrs := validateVirtualServerSpec(&virtualServer.Spec, field.NewPath("spec"), isPlus, virtualServer.Namespace)
 	return allErrs.ToAggregate()
 }
 
 // validateVirtualServerSpec validates a VirtualServerSpec.
-func validateVirtualServerSpec(spec *v1.VirtualServerSpec, fieldPath *field.Path, isPlus bool) field.ErrorList {
+func validateVirtualServerSpec(spec *v1.VirtualServerSpec, fieldPath *field.Path, isPlus bool, namespace string) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	allErrs = append(allErrs, validateHost(spec.Host, fieldPath.Child("host"))...)
 	allErrs = append(allErrs, validateTLS(spec.TLS, fieldPath.Child("tls"))...)
+	allErrs = append(allErrs, validatePolicies(spec.Policies, fieldPath.Child("policies"), namespace)...)
 
 	upstreamErrs, upstreamNames := validateUpstreams(spec.Upstreams, fieldPath.Child("upstreams"), isPlus)
 	allErrs = append(allErrs, upstreamErrs...)
 
-	allErrs = append(allErrs, validateVirtualServerRoutes(spec.Routes, fieldPath.Child("routes"), upstreamNames)...)
+	allErrs = append(allErrs, validateVirtualServerRoutes(spec.Routes, fieldPath.Child("routes"), upstreamNames, namespace)...)
 
 	return allErrs
 }
@@ -50,6 +51,44 @@ func validateHost(host string, fieldPath *field.Path) field.ErrorList {
 
 	for _, msg := range validation.IsDNS1123Subdomain(host) {
 		allErrs = append(allErrs, field.Invalid(fieldPath, host, msg))
+	}
+
+	return allErrs
+}
+
+func validatePolicies(policies []v1.PolicyReference, fieldPath *field.Path, namespace string) field.ErrorList {
+	allErrs := field.ErrorList{}
+	policyKeys := sets.String{}
+
+	for i, p := range policies {
+		idxPath := fieldPath.Index(i)
+
+		polNamespace := p.Namespace
+		if polNamespace == "" {
+			polNamespace = namespace
+		}
+
+		key := fmt.Sprintf("%s/%s", polNamespace, p.Name)
+
+		if policyKeys.Has(key) {
+			allErrs = append(allErrs, field.Duplicate(idxPath, key))
+		} else {
+			policyKeys.Insert(key)
+		}
+
+		if p.Name == "" {
+			allErrs = append(allErrs, field.Required(idxPath.Child("name"), ""))
+		} else {
+			for _, msg := range validation.IsDNS1123Subdomain(p.Name) {
+				allErrs = append(allErrs, field.Invalid(idxPath.Child("name"), p.Name, msg))
+			}
+		}
+
+		if p.Namespace != "" {
+			for _, msg := range validation.IsDNS1123Label(p.Namespace) {
+				allErrs = append(allErrs, field.Invalid(idxPath.Child("namespace"), p.Namespace, msg))
+			}
+		}
 	}
 
 	return allErrs
@@ -532,7 +571,7 @@ func validateDNS1035Label(name string, fieldPath *field.Path) field.ErrorList {
 	return allErrs
 }
 
-func validateVirtualServerRoutes(routes []v1.Route, fieldPath *field.Path, upstreamNames sets.String) field.ErrorList {
+func validateVirtualServerRoutes(routes []v1.Route, fieldPath *field.Path, upstreamNames sets.String, namespace string) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	allPaths := sets.String{}
@@ -541,7 +580,7 @@ func validateVirtualServerRoutes(routes []v1.Route, fieldPath *field.Path, upstr
 		idxPath := fieldPath.Index(i)
 
 		isRouteFieldForbidden := false
-		routeErrs := validateRoute(r, idxPath, upstreamNames, isRouteFieldForbidden)
+		routeErrs := validateRoute(r, idxPath, upstreamNames, isRouteFieldForbidden, namespace)
 		if len(routeErrs) > 0 {
 			allErrs = append(allErrs, routeErrs...)
 		} else if allPaths.Has(r.Path) {
@@ -554,10 +593,11 @@ func validateVirtualServerRoutes(routes []v1.Route, fieldPath *field.Path, upstr
 	return allErrs
 }
 
-func validateRoute(route v1.Route, fieldPath *field.Path, upstreamNames sets.String, isRouteFieldForbidden bool) field.ErrorList {
+func validateRoute(route v1.Route, fieldPath *field.Path, upstreamNames sets.String, isRouteFieldForbidden bool, namespace string) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	allErrs = append(allErrs, validateRoutePath(route.Path, fieldPath.Child("path"))...)
+	allErrs = append(allErrs, validatePolicies(route.Policies, fieldPath.Child("policies"), namespace)...)
 
 	fieldCount := 0
 
@@ -1352,17 +1392,19 @@ func isValidMatchValue(value string) []string {
 
 // ValidateVirtualServerRoute validates a VirtualServerRoute.
 func ValidateVirtualServerRoute(virtualServerRoute *v1.VirtualServerRoute, isPlus bool) error {
-	allErrs := validateVirtualServerRouteSpec(&virtualServerRoute.Spec, field.NewPath("spec"), "", "/", isPlus)
+	allErrs := validateVirtualServerRouteSpec(&virtualServerRoute.Spec, field.NewPath("spec"), "", "/", isPlus, virtualServerRoute.Namespace)
 	return allErrs.ToAggregate()
 }
 
 // ValidateVirtualServerRouteForVirtualServer validates a VirtualServerRoute for a VirtualServer represented by its host and path prefix.
 func ValidateVirtualServerRouteForVirtualServer(virtualServerRoute *v1.VirtualServerRoute, virtualServerHost string, vsPath string, isPlus bool) error {
-	allErrs := validateVirtualServerRouteSpec(&virtualServerRoute.Spec, field.NewPath("spec"), virtualServerHost, vsPath, isPlus)
+	allErrs := validateVirtualServerRouteSpec(&virtualServerRoute.Spec, field.NewPath("spec"), virtualServerHost, vsPath, isPlus,
+		virtualServerRoute.Namespace)
 	return allErrs.ToAggregate()
 }
 
-func validateVirtualServerRouteSpec(spec *v1.VirtualServerRouteSpec, fieldPath *field.Path, virtualServerHost string, vsPath string, isPlus bool) field.ErrorList {
+func validateVirtualServerRouteSpec(spec *v1.VirtualServerRouteSpec, fieldPath *field.Path, virtualServerHost string, vsPath string, isPlus bool,
+	namespace string) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	allErrs = append(allErrs, validateVirtualServerRouteHost(spec.Host, virtualServerHost, fieldPath.Child("host"))...)
@@ -1370,7 +1412,7 @@ func validateVirtualServerRouteSpec(spec *v1.VirtualServerRouteSpec, fieldPath *
 	upstreamErrs, upstreamNames := validateUpstreams(spec.Upstreams, fieldPath.Child("upstreams"), isPlus)
 	allErrs = append(allErrs, upstreamErrs...)
 
-	allErrs = append(allErrs, validateVirtualServerRouteSubroutes(spec.Subroutes, fieldPath.Child("subroutes"), upstreamNames, vsPath)...)
+	allErrs = append(allErrs, validateVirtualServerRouteSubroutes(spec.Subroutes, fieldPath.Child("subroutes"), upstreamNames, vsPath, namespace)...)
 
 	return allErrs
 }
@@ -1392,7 +1434,7 @@ func isRegexOrExactMatch(path string) bool {
 	return strings.HasPrefix(path, "~") || strings.HasPrefix(path, "=")
 }
 
-func validateVirtualServerRouteSubroutes(routes []v1.Route, fieldPath *field.Path, upstreamNames sets.String, vsPath string) field.ErrorList {
+func validateVirtualServerRouteSubroutes(routes []v1.Route, fieldPath *field.Path, upstreamNames sets.String, vsPath string, namespace string) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	allPaths := sets.String{}
@@ -1407,14 +1449,14 @@ func validateVirtualServerRouteSubroutes(routes []v1.Route, fieldPath *field.Pat
 			return append(allErrs, field.Invalid(idxPath.Child("path"), routes[0].Path, "must have the same path as the referenced VirtualServer route path"))
 		}
 
-		return validateRoute(routes[0], idxPath, upstreamNames, true)
+		return validateRoute(routes[0], idxPath, upstreamNames, true, namespace)
 	}
 
 	for i, r := range routes {
 		idxPath := fieldPath.Index(i)
 
 		isRouteFieldForbidden := true
-		routeErrs := validateRoute(r, idxPath, upstreamNames, isRouteFieldForbidden)
+		routeErrs := validateRoute(r, idxPath, upstreamNames, isRouteFieldForbidden, namespace)
 
 		if vsPath != "" && !strings.HasPrefix(r.Path, vsPath) && !isRegexOrExactMatch(r.Path) {
 			msg := fmt.Sprintf("must start with '%s'", vsPath)

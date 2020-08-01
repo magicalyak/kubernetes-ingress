@@ -30,6 +30,10 @@ map {{ $m.Source }} {{ $m.Variable }} {
 }
 {{ end }}
 
+{{ range $snippet := .HTTPSnippets }}
+{{- $snippet }}
+{{ end }}
+
 {{ $s := .Server }}
 server {
     listen 80{{ if $s.ProxyProtocol }} proxy_protocol{{ end }};
@@ -71,8 +75,26 @@ server {
     real_ip_recursive on;
     {{ end }}
 
+    {{ with $s.PoliciesErrorReturn }}
+    return {{ .Code }};
+    {{ end }}
+
+    {{ range $allow := $s.Allow }}
+    allow {{ $allow }};
+    {{ end }}
+    {{ if gt (len $s.Allow) 0 }}
+    deny all;
+    {{ end }}
+
+    {{ range $deny := $s.Deny }}
+    deny {{ $deny }};
+    {{ end }}
+    {{ if gt (len $s.Deny) 0 }}
+    allow all;
+    {{ end }}
+
     {{ range $snippet := $s.Snippets }}
-    {{ $snippet }}
+    {{- $snippet }}
     {{ end }}
 
     {{ range $l := $s.InternalRedirectLocations }}
@@ -94,31 +116,58 @@ server {
     }
     {{ end }}
 
+    {{ range $l := $s.ReturnLocations }}
+    location {{ $l.Name }} {
+        default_type "{{ $l.DefaultType }}";
+        # status code is ignored here, using 0
+        return 0 "{{ $l.Return.Text }}";
+    }
+    {{ end }}
+
     {{ range $l := $s.Locations }}
     location {{ $l.Path }} {
         {{ if $l.Internal }}
         internal;
         {{ end }}
         {{ range $snippet := $l.Snippets }}
-        {{ $snippet }}
+        {{- $snippet }}
         {{ end }}
 
-        {{ with $l.Return }}
-            {{ if $l.DefaultType }}
-        default_type "{{ $l.DefaultType }}";
-            {{ end }}
-        return {{ .Code }} "{{ .Text }}";
+        {{ with $l.PoliciesErrorReturn }}
+        return {{ .Code }};
+        {{ end }}
+
+        {{ range $allow := $l.Allow }}
+        allow {{ $allow }};
+        {{ end }}
+        {{ if gt (len $l.Allow) 0 }}
+        deny all;
+        {{ end }}
+
+        {{ range $deny := $l.Deny }}
+        deny {{ $deny }};
+        {{ end }}
+        {{ if gt (len $l.Deny) 0 }}
+        allow all;
+        {{ end }}
+
+        {{ range $e := $l.ErrorPages }}
+        error_page {{ $e.Codes }} {{ if ne 0 $e.ResponseCode }}={{ $e.ResponseCode }}{{ end }} "{{ $e.Name }}";
+        {{ end }}
+
+        {{ if $l.ProxyInterceptErrors }}
+        proxy_intercept_errors on;
+        {{ end }}
+
+        {{ if $l.InternalProxyPass }}
+        proxy_pass {{ $l.InternalProxyPass }};
         {{ end }}
 
         {{ if $l.ProxyPass }}
-            {{ range $e := $l.ErrorPages }}
-        error_page {{ $e.Codes }} {{ if ne 0 $e.ResponseCode }}={{ $e.ResponseCode }}{{ end }} "{{ $e.Name }}";
-            {{ end }}
-
         set $default_connection_header {{ if $l.HasKeepalive }}""{{ else }}close{{ end }};
 
             {{ range $r := $l.Rewrites }}
-                rewrite {{ $r }};
+        rewrite {{ $r }};
             {{ end }}
         proxy_connect_timeout {{ $l.ProxyConnectTimeout }};
         proxy_read_timeout {{ $l.ProxyReadTimeout }};
@@ -135,9 +184,6 @@ server {
             {{ end }}
             {{ if $l.ProxyBufferSize }}
         proxy_buffer_size {{ $l.ProxyBufferSize }};
-            {{ end }}
-            {{ if $l.ProxyInterceptErrors }}
-                proxy_intercept_errors on;
             {{ end }}
         proxy_http_version 1.1;
 
@@ -163,15 +209,6 @@ server {
             {{ end }}
             {{ range $h := $l.AddHeaders }}
         add_header {{ $h.Name }} "{{ $h.Value }}" {{ if $h.Always }}always{{ end }};
-            {{ end }}
-            {{ if $.SpiffeCerts }}
-        proxy_ssl_certificate /etc/nginx/secrets/spiffe_cert.pem;
-        proxy_ssl_certificate_key /etc/nginx/secrets/spiffe_key.pem;
-        proxy_ssl_trusted_certificate /etc/nginx/secrets/spiffe_rootca.pem;
-        proxy_ssl_server_name on;
-        proxy_ssl_verify on;
-        proxy_ssl_verify_depth 25;
-        proxy_ssl_name {{ $l.ProxySSLName }};
             {{ end }}
         proxy_pass {{ $l.ProxyPass }}{{ $l.ProxyPassRewrite }};
         proxy_next_upstream {{ $l.ProxyNextUpstream }};

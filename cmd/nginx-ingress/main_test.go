@@ -7,7 +7,7 @@ import (
 )
 
 func TestValidatePort(t *testing.T) {
-	badPorts := []int{80, 443, 1, 1022, 65536}
+	badPorts := []int{80, 443, 1, 1023, 65536}
 	for _, badPort := range badPorts {
 		err := validatePort(badPort)
 		if err == nil {
@@ -15,7 +15,7 @@ func TestValidatePort(t *testing.T) {
 		}
 	}
 
-	goodPorts := []int{8080, 8081, 8082, 1023, 65535}
+	goodPorts := []int{8080, 8081, 8082, 1024, 65535}
 	for _, goodPort := range goodPorts {
 		err := validatePort(goodPort)
 		if err != nil {
@@ -121,6 +121,42 @@ func TestValidateLocation(t *testing.T) {
 		err := validateLocation(goodLocation)
 		if err != nil {
 			t.Errorf("validateLocation(%v) returned an error when it should have returned no error: %v", goodLocation, err)
+		}
+	}
+}
+
+func TestParseReloadTimeout(t *testing.T) {
+	tests := []struct {
+		timeout           int
+		appProtectEnabled bool
+		expected          int
+	}{
+		{
+			timeout:           0,
+			appProtectEnabled: true,
+			expected:          20000,
+		},
+		{
+			timeout:           0,
+			appProtectEnabled: false,
+			expected:          4000,
+		},
+		{
+			timeout:           1000,
+			appProtectEnabled: true,
+			expected:          1000,
+		},
+		{
+			timeout:           1000,
+			appProtectEnabled: false,
+			expected:          1000,
+		},
+	}
+
+	for _, test := range tests {
+		result := parseReloadTimeout(test.appProtectEnabled, test.timeout)
+		if result != test.expected {
+			t.Errorf("parseReloadTimeout(%v, %v) returned %v but expected %v", test.appProtectEnabled, test.timeout, result, test.expected)
 		}
 	}
 }
