@@ -1,0 +1,34 @@
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: cafe-ingress
+  annotations:
+    custom.nginx.org/enable-oidc:  "True"
+    custom.nginx.org/keyval-zone-size: "1m"           # (default 1m)
+    custom.nginx.org/refresh-token-timeout: "8h"      # (default 8h)
+    custom.nginx.org/session-token-timeout: "1h"      # (default 1h)
+    custom.nginx.org/oidc-resolver-address: "8.8.8.8" # (default 8.8.8.8)
+    custom.nginx.org/oidc-jwt-keyfile: "https://login.microsoftonline.com/dd3dfd2f-6a3b-40d1-9be0-bf8327d81c50/discovery/v2.0/keys"
+    custom.nginx.org/oidc-logout-redirect: "https://login.microsoftonline.com/dd3dfd2f-6a3b-40d1-9be0-bf8327d81c50/oauth2/v2.0/logout"
+    custom.nginx.org/oidc-authz-endpoint: "https://login.microsoftonline.com/dd3dfd2f-6a3b-40d1-9be0-bf8327d81c50/oauth2/v2.0/authorize"
+    custom.nginx.org/oidc-token-endpoint: "https://login.microsoftonline.com/dd3dfd2f-6a3b-40d1-9be0-bf8327d81c50/oauth2/v2.0/token"
+    custom.nginx.org/oidc-client:  "f66df7b0-7378-489a-a98d-2c166c157843"
+    custom.nginx.org/oidc-client-secret: "NdbGS-NY-YLqLLJ8u26Uemd.q6%3De1J%2F6"
+    custom.nginx.org/oidc-hmac-key:  "vC5FabzvYvFZFBzxtRCYDYX+"
+spec:
+  tls:
+  - hosts:
+    - cafe.nginx.net
+    secretName: cafe-secret
+  rules:
+  - host: cafe.nginx.net
+    http:
+      paths:
+      - path: /tea
+        backend:
+          serviceName: tea-svc
+          servicePort: 80
+      - path: /coffee
+        backend:
+          serviceName: coffee-svc
+          servicePort: 80

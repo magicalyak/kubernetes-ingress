@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hello-conf
+data:
+  hello.conf: |
+    # configuration file /etc/nginx/conf.d/hello.conf:
+    server {
+        listen 8080;
+
+        location / {
+            default_type text/plain;
+            expires -1;
+            return 200 'Server address: $server_addr:$server_port\nServer name: $hostname\nDate: $time_local\nURI: $request_uri\nRequest ID: $request_id\nHello $http_jwt_name\nYour username is: $http_jwt_username!\nYour email is: $http_jwt_email\nYour email verification status is: $http_jwt_email_verified\nYour aud claim is: $http_jwt_aud\nYour azp is: $http_jwt_azp\nYour acr is: $http_jwt_acr\nYour typ is: $http_jwt_typ\nYour firstname is: $http_jwt_firstname\nYour lastname is: $http_jwt_lastname\n';
+        }
+    }

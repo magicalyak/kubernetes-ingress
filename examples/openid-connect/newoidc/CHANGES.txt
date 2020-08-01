@@ -1,0 +1,11 @@
+CHANGES, Feb/Mar/Apr-2020
+
+Feature: Additional configuration variables for scopes and cookie flags
+Feature: Missing configurables are detected (if not by syntax check then explicit tests in njs at start of login flow)
+Feature: OpenID Connect activity metrics are recorded in discrete location_zones and visible on the NGINX Plus dashboard
+Change: Configuration is now by multiple map blocks, instead of set directives in the server{} context. This puts all OIDC configuration in the same context and enables multiple IdPs to be supported by passing the appropriate input variable into the map ($host is used by default).
+Change: Configuration is in a separate file
+Change: The initiation of the authorization code flow is now implemented in njs instead of regular syntax (js_content oidcAuth in the @do_oidc_flow location)
+Change: TLS-SNI is used when proxying to the IdP
+Change: js_import replaces deprecated js_include
+Bugfix: WWW-Authenticate header is removed after successful refresh flow
